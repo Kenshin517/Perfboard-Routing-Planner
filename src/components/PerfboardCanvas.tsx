@@ -48,8 +48,10 @@ interface Props {
   pendingPath?: HoleCoord[] | null;
   /** Live preview from the picked pad to the hovered hole (dashed). */
   previewPath?: HoleCoord[] | null;
-  /** Free-draw path committed so far (solid, with vertices). */
+  /** Free-draw grid path so far (solid line, stitched through waypoints). */
   drawPath?: HoleCoord[] | null;
+  /** Free-draw waypoints the user clicked (drawn as dots). */
+  drawWaypoints?: HoleCoord[] | null;
   /** An unplaced component being dropped: the next click places it. */
   placingComponentId?: string | null;
   onRoutePick?: (hole: HoleCoord) => void;
@@ -86,6 +88,7 @@ export default function PerfboardCanvas({
   pendingPath = null,
   previewPath = null,
   drawPath = null,
+  drawWaypoints = null,
   placingComponentId = null,
   onRoutePick,
   onRouteFinish,
@@ -285,12 +288,12 @@ export default function PerfboardCanvas({
     };
     if (previewPath && previewPath.length >= 2) drawPoly(previewPath, "rgba(255,255,255,0.45)", Math.max(1.5, step * 0.12), [step * 0.25, step * 0.2]);
     if (pendingPath && pendingPath.length >= 2) drawPoly(pendingPath, palette.routeStart, Math.max(2.5, step * 0.22), []);
-    if (drawPath && drawPath.length >= 1) {
-      if (drawPath.length >= 2) drawPoly(drawPath, palette.routeStart, Math.max(2.5, step * 0.2), []);
+    if (drawPath && drawPath.length >= 2) drawPoly(drawPath, palette.routeStart, Math.max(2.5, step * 0.2), []);
+    if (drawWaypoints && drawWaypoints.length) {
       ctx.fillStyle = palette.routeStart;
-      for (const h of drawPath) {
+      for (const h of drawWaypoints) {
         ctx.beginPath();
-        ctx.arc(sx(h.col), sy(h.row), Math.max(2, step * 0.16), 0, Math.PI * 2);
+        ctx.arc(sx(h.col), sy(h.row), Math.max(2.5, step * 0.2), 0, Math.PI * 2);
         ctx.fill();
       }
     }
@@ -350,7 +353,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath, drawWaypoints]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {

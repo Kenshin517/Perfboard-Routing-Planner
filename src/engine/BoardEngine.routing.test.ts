@@ -54,6 +54,30 @@ describe("manual routing", () => {
     expect(pv.net).toBe("A");
   });
 
+  it("keeps bottom-copper orthogonal (grid-following), jumpers may go diagonal", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    const bottom = b.previewRoute({ col: 0, row: 0 }, { col: 3, row: 3 })!; // default bottom-copper
+    for (let i = 1; i < bottom.path.length; i++) {
+      const dc = Math.abs(bottom.path[i].col - bottom.path[i - 1].col);
+      const dr = Math.abs(bottom.path[i].row - bottom.path[i - 1].row);
+      expect(dc + dr).toBe(1); // orthogonal single steps only
+    }
+    const jumper = b.previewRoute({ col: 0, row: 0 }, { col: 3, row: 3 }, { layer: "jumper" })!;
+    expect(jumper.path).toHaveLength(4); // 3 diagonal steps
+  });
+
+  it("routeWaypoints stitches a continuous orthogonal trace through the clicks", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    const r = b.routeWaypoints([{ col: 0, row: 0 }, { col: 3, row: 0 }, { col: 3, row: 3 }])!;
+    expect(r.path[0]).toEqual({ col: 0, row: 0 });
+    expect(r.path[r.path.length - 1]).toEqual({ col: 3, row: 3 });
+    for (let i = 1; i < r.path.length; i++) {
+      const dc = Math.abs(r.path[i].col - r.path[i - 1].col);
+      const dr = Math.abs(r.path[i].row - r.path[i - 1].row);
+      expect(dc + dr).toBe(1);
+    }
+  });
+
   it("validates and edits traces", () => {
     const b = twoHeaderBoard();
     expect(() => b.addTrace([{ col: 0, row: 0 }])).toThrow(); // too short

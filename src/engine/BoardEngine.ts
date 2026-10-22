@@ -29,6 +29,18 @@ export interface RouteOptions {
   layer?: Layer;
   /** Extra blocked cells for the pathfinder (e.g. existing bare traces). */
   isBlocked?: (c: HoleCoord) => boolean;
+  /**
+   * Allow diagonal steps. Defaults by layer: bottom-copper is orthogonal only
+   * (realistic solder bridges run along grid rows/columns), jumper allows
+   * diagonal (insulated wire can go any direction).
+   */
+  allowDiagonal?: boolean;
+}
+
+/** Bare copper follows the grid (no diagonals); jumpers may go diagonal. */
+function diagonalForLayer(layer: Layer | undefined, override: boolean | undefined): boolean {
+  if (override !== undefined) return override;
+  return layer === "jumper";
 }
 
 /** Minimal union-find over integer ids. */
@@ -454,6 +466,7 @@ export class BoardEngine {
     const path = findPath(a, b, {
       cols: this.cols,
       rows: this.rows,
+      allowDiagonal: diagonalForLayer(opts.layer ?? "bottom-copper", opts.allowDiagonal),
       // A bare wire can't run through another component's pad (it would short).
       // Start/goal are exempt in findPath, so routing INTO a pad still works.
       isBlocked: (c) => foreign.has(key(c)) || (opts.isBlocked?.(c) ?? false),
@@ -461,6 +474,25 @@ export class BoardEngine {
     if (!path) return null;
     const na = this.netAt(a), nb = this.netAt(b);
     return { path, net: na && na === nb ? na : undefined };
+  }
+
+  /**
+   * Route a path through a sequence of waypoints (bottom-copper, grid-following),
+   * stitching an A* path between each consecutive pair. Used by free-draw so the
+   * wire follows the grid instead of cutting straight across. No commit; null if
+   * any segment can't be routed.
+   */
+  routeWaypoints(points: HoleCoord[], opts: RouteOptions = {}): { path: HoleCoord[]; net?: string } | null {
+    if (points.length < 2) return null;
+    const full: HoleCoord[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const seg = this.previewRoute(points[i], points[i + 1], opts);
+      if (!seg) return null;
+      if (i === 0) full.push(...seg.path);
+      else full.push(...seg.path.slice(1)); // drop the shared joint
+    }
+    const na = this.netAt(points[0]), nb = this.netAt(points[points.length - 1]);
+    return { path: full, net: na && na === nb ? na : undefined };
   }
 
   /** Map of "ref/pin" -> net name, for quick net lookups. */
@@ -588,6 +620,7 @@ export class BoardEngine {
       const bottomPath = findPath(w.a, w.b, {
         cols: this.cols,
         rows: this.rows,
+        allowDiagonal: false, // bare copper follows the grid
         isBlocked: (c) => blocked.has(key(c)),
       });
 
@@ -600,8 +633,8 @@ export class BoardEngine {
           bottom++;
         }
       } else {
-        // No clear bottom path — run a jumper (insulated, may cross anything).
-        const free = findPath(w.a, w.b, { cols: this.cols, rows: this.rows });
+        // No clear bottom path — run a jumper (insulated, may cross/diagonal).
+        const free = findPath(w.a, w.b, { cols: this.cols, rows: this.rows, allowDiagonal: true });
         if (!free) break; // genuinely unreachable; stop to avoid an infinite loop
         this.addTrace(free, { layer: "jumper", net: w.net });
         jumper++;

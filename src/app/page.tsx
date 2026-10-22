@@ -218,14 +218,13 @@ export default function Home() {
     setDrawPath((p) => [...p, hole]);
   };
   const finishFreeDraw = () => {
-    if (drawPath.length < 2) {
+    const r = drawPath.length >= 2 ? engine.routeWaypoints(drawPath) : null;
+    if (!r || r.path.length < 2) {
+      if (drawPath.length >= 2) alert("Gak bisa nyambungin titik-titik itu lewat grid (kehalang).");
       setDrawPath([]);
       return;
     }
-    const na = engine.netAt(drawPath[0]);
-    const nb = engine.netAt(drawPath[drawPath.length - 1]);
-    const path = drawPath;
-    mutate(() => engine.addTrace(path, { layer: "bottom-copper", net: na && na === nb ? na : undefined }));
+    mutate(() => engine.addTrace(r.path, { layer: "bottom-copper", net: r.net }));
     setDrawPath([]);
   };
 
@@ -247,9 +246,13 @@ export default function Home() {
   const previewPath =
     routing && routeMode === "auto" && routeStart && hoverHole
       ? engine.previewRoute(routeStart, hoverHole)?.path ?? null
-      : routing && routeMode === "free" && drawPath.length > 0 && hoverHole
-        ? [drawPath[drawPath.length - 1], hoverHole]
-        : null;
+      : null;
+  // Free-draw: the grid path stitched through clicked waypoints (+ hover).
+  const freePoints = hoverHole ? [...drawPath, hoverHole] : drawPath;
+  const freeStitched =
+    routing && routeMode === "free" && freePoints.length >= 2
+      ? engine.routeWaypoints(freePoints)?.path ?? null
+      : null;
   const unplaced = engine.getUnplacedComponents();
   const airwires = engine.ratsnest();
   const crossPairs = engine.crossings();
@@ -493,7 +496,8 @@ export default function Home() {
             onSelectTrace={setSelectedTrace}
             onSelect={setSelected}
             onPlace={place}
-            drawPath={drawPath}
+            drawPath={freeStitched}
+            drawWaypoints={drawPath}
             onRouteFinish={finishFreeDraw}
             onMoveStart={pushHistory}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}

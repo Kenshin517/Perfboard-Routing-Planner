@@ -22,24 +22,24 @@ describe("autoroute", () => {
     expect(b.counts().bottomCrossings).toBe(0);
   });
 
-  it("uses a jumper when two required connections must cross", () => {
-    const b = createBoard({ cols: 20, rows: 20 });
-    // Two nets whose links form an X: A = (0,0)-(6,6), B = (0,6)-(6,0).
-    pads(b, [
-      { col: 0, row: 0 },
-      { col: 6, row: 6 },
-      { col: 0, row: 6 },
-      { col: 6, row: 0 },
-    ]);
+  it("falls back to a jumper when the only bottom path is walled off", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    // Net A: a bare trace walling off row 3 across the whole board width.
+    b.addTrace(
+      Array.from({ length: 10 }, (_, c) => ({ col: c, row: 3 })),
+      { layer: "bottom-copper", net: "A" },
+    );
+    // Net B must get from row 0 to row 9 — every column at row 3 is blocked.
+    pads(b, [{ col: 5, row: 0 }, { col: 5, row: 9 }]);
     b.setNets([
-      { name: "A", pins: [{ ref: "P1", pin: "1" }, { ref: "P2", pin: "1" }] },
-      { name: "B", pins: [{ ref: "P3", pin: "1" }, { ref: "P4", pin: "1" }] },
+      { name: "A", pins: [] },
+      { name: "B", pins: [{ ref: "P1", pin: "1" }, { ref: "P2", pin: "1" }] },
     ]);
 
     const res = b.autoroute();
-    expect(b.ratsnest()).toHaveLength(0); // both nets connected
+    expect(b.ratsnest()).toHaveLength(0); // B connected (via jumper)
     expect(b.counts().bottomCrossings).toBe(0); // no bare crossing remains
-    expect(res.jumper + b.counts().jumpers).toBeGreaterThanOrEqual(1); // at least one went to jumper
+    expect(res.jumper + b.counts().jumpers).toBeGreaterThanOrEqual(1);
   });
 
   it("is idempotent — a second pass adds nothing", () => {
