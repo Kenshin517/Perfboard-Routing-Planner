@@ -39,6 +39,21 @@ describe("manual routing", () => {
     expect(b.getTraces()).toHaveLength(1);
   });
 
+  it("routes around a foreign component's pad instead of through it", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    b.registerFootprint({ name: "PIN1", pins: [{ num: "1", col: 0, row: 0 }], body: { w: 1, h: 1 } });
+    b.addComponent({ footprint: "PIN1", ref: "A1", anchor: { col: 0, row: 0 } });
+    b.addComponent({ footprint: "PIN1", ref: "A2", anchor: { col: 4, row: 0 } });
+    b.addComponent({ footprint: "PIN1", ref: "B1", anchor: { col: 2, row: 0 } }); // foreign, in the way
+    b.setNets([
+      { name: "A", pins: [{ ref: "A1", pin: "1" }, { ref: "A2", pin: "1" }] },
+      { name: "B", pins: [{ ref: "B1", pin: "1" }] },
+    ]);
+    const pv = b.previewRoute({ col: 0, row: 0 }, { col: 4, row: 0 })!;
+    expect(pv.path.some((h) => h.col === 2 && h.row === 0)).toBe(false); // never through B1's pad
+    expect(pv.net).toBe("A");
+  });
+
   it("validates and edits traces", () => {
     const b = twoHeaderBoard();
     expect(() => b.addTrace([{ col: 0, row: 0 }])).toThrow(); // too short

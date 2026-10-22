@@ -448,10 +448,36 @@ export class BoardEngine {
    * path exists.
    */
   previewRoute(a: HoleCoord, b: HoleCoord, opts: RouteOptions = {}): { path: HoleCoord[]; net?: string } | null {
-    const path = findPath(a, b, { cols: this.cols, rows: this.rows, isBlocked: opts.isBlocked });
+    const routeNet = this.netAt(a) ?? this.netAt(b);
+    const foreign = this.foreignPadHoles(routeNet);
+    const key = (c: HoleCoord) => `${c.col},${c.row}`;
+    const path = findPath(a, b, {
+      cols: this.cols,
+      rows: this.rows,
+      // A bare wire can't run through another component's pad (it would short).
+      // Start/goal are exempt in findPath, so routing INTO a pad still works.
+      isBlocked: (c) => foreign.has(key(c)) || (opts.isBlocked?.(c) ?? false),
+    });
     if (!path) return null;
     const na = this.netAt(a), nb = this.netAt(b);
     return { path, net: na && na === nb ? na : undefined };
+  }
+
+  /** Map of "ref/pin" -> net name, for quick net lookups. */
+  private pinNetMap(): Map<string, string> {
+    const m = new Map<string, string>();
+    for (const n of this.state.nets) for (const p of n.pins) m.set(`${p.ref}/${p.pin}`, n.name);
+    return m;
+  }
+
+  /** Holes occupied by pads NOT on the given net (obstacles for a bare route). */
+  private foreignPadHoles(routeNet: string | undefined): Set<string> {
+    const netOf = this.pinNetMap();
+    const out = new Set<string>();
+    for (const p of this.allPins()) {
+      if (netOf.get(`${p.ref}/${p.pin}`) !== routeNet) out.add(`${p.coord.col},${p.coord.row}`);
+    }
+    return out;
   }
 
   /**

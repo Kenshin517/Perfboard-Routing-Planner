@@ -25,7 +25,7 @@ function nextRef(engine: BoardEngine, prefix: string): string {
 
 export default function Home() {
   const engineRef = useRef<BoardEngine>();
-  if (!engineRef.current) engineRef.current = createBoard({ cols: 24, rows: 20 });
+  if (!engineRef.current) engineRef.current = createBoard({ cols: 25, rows: 29 }); // A..Y x 1..29 (real board)
   const engine = engineRef.current;
 
   const [rev, setRev] = useState(0);
@@ -37,9 +37,11 @@ export default function Home() {
   const [armed, setArmed] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [routing, setRouting] = useState(false);
+  const [routeMode, setRouteMode] = useState<"auto" | "free">("auto");
   const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
   const [hoverHole, setHoverHole] = useState<HoleCoord | null>(null);
   const [pending, setPending] = useState<{ path: HoleCoord[]; net?: string } | null>(null);
+  const [drawPath, setDrawPath] = useState<HoleCoord[]>([]);
   const [placingId, setPlacingId] = useState<string | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
@@ -49,12 +51,58 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const netlistRef = useRef<HTMLInputElement>(null);
 
-  const swapEngine = (next: BoardEngine) => {
+  const history = useRef<{ past: string[]; future: string[] }>({ past: [], future: [] });
+  const snapshot = () => JSON.stringify(engine.serialize());
+
+  const clearTransient = () => {
+    setSelected(null);
+    setSelectedTrace(null);
+    setPlacingId(null);
+    setPending(null);
+    setRouteStart(null);
+    setHoverHole(null);
+    setDrawPath([]);
+  };
+
+  const swapEngine = (next: BoardEngine, resetHistory = true) => {
     engineRef.current = next;
+    if (resetHistory) history.current = { past: [], future: [] };
     setCols(next.cols);
     setRows(next.rows);
-    setSelected(null);
     setArmed(null);
+    clearTransient();
+    bump();
+  };
+
+  // Snapshot current state, then run a mutation (so it can be undone).
+  const pushHistory = () => {
+    history.current.past.push(snapshot());
+    if (history.current.past.length > 80) history.current.past.shift();
+    history.current.future = [];
+  };
+  const mutate = (fn: () => void) => {
+    pushHistory();
+    fn();
+    bump();
+  };
+  const undo = () => {
+    const h = history.current;
+    if (!h.past.length) return;
+    h.future.push(snapshot());
+    engineRef.current = BoardEngine.fromSerialized(JSON.parse(h.past.pop()!));
+    setCols(engineRef.current.cols);
+    setRows(engineRef.current.rows);
+    clearTransient();
+    bump();
+  };
+  const redo = () => {
+    const h = history.current;
+    if (!h.future.length) return;
+    h.past.push(snapshot());
+    engineRef.current = BoardEngine.fromSerialized(JSON.parse(h.future.pop()!));
+    setCols(engineRef.current.cols);
+    setRows(engineRef.current.rows);
+    clearTransient();
     bump();
   };
 
@@ -106,6 +154,7 @@ export default function Home() {
     if (!file) return;
     try {
       const parsed = parseKicadXmlNetlist(await file.text());
+      pushHistory();
       const res = engine.loadNetlist(parsed);
       setResetToken((t) => t + 1);
       bump();
@@ -126,12 +175,17 @@ export default function Home() {
       setRouteStart(null);
       setHoverHole(null);
       setPending(null);
+      setDrawPath([]);
       setSelected(null);
       return next;
     });
   };
 
   const onRoutePick = (hole: HoleCoord) => {
+    if (routeMode === "free") {
+      freeDrawPick(hole);
+      return;
+    }
     if (!routeStart) {
       setRouteStart(hole);
       setHoverHole(null);
@@ -146,9 +200,8 @@ export default function Home() {
 
   const confirmRoute = () => {
     if (!pending) return;
-    engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net });
+    mutate(() => engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net }));
     setPending(null);
-    bump();
   };
   const cancelRoute = () => {
     setPending(null);
@@ -156,14 +209,37 @@ export default function Home() {
     setHoverHole(null);
   };
 
+  // Free-draw: append a clicked hole (blocking foreign pads), finish on Enter/double-click.
+  const freeDrawPick = (hole: HoleCoord) => {
+    const startNet = drawPath.length ? engine.netAt(drawPath[0]) : engine.netAt(hole);
+    const hn = engine.netAt(hole);
+    if (drawPath.length && hn && hn !== startNet) return; // can't pass through a foreign pad
+    setDrawPath((p) => [...p, hole]);
+  };
+  const finishFreeDraw = () => {
+    if (drawPath.length < 2) {
+      setDrawPath([]);
+      return;
+    }
+    const na = engine.netAt(drawPath[0]);
+    const nb = engine.netAt(drawPath[drawPath.length - 1]);
+    const path = drawPath;
+    mutate(() => engine.addTrace(path, { layer: "bottom-copper", net: na && na === nb ? na : undefined }));
+    setDrawPath([]);
+  };
+
   const placeExisting = (id: string, hole: HoleCoord) => {
-    engine.place(id, hole);
+    mutate(() => engine.place(id, hole));
     setPlacingId(null);
-    bump();
   };
 
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
-  const previewPath = routing && routeStart && hoverHole ? engine.previewRoute(routeStart, hoverHole)?.path ?? null : null;
+  const previewPath =
+    routing && routeMode === "auto" && routeStart && hoverHole
+      ? engine.previewRoute(routeStart, hoverHole)?.path ?? null
+      : routing && routeMode === "free" && drawPath.length > 0 && hoverHole
+        ? [drawPath[drawPath.length - 1], hoverHole]
+        : null;
   const unplaced = engine.getUnplacedComponents();
   const airwires = engine.ratsnest();
   const crossPairs = engine.crossings();
@@ -171,45 +247,53 @@ export default function Home() {
   const counts = engine.counts();
   const selTrace = selectedTrace ? engine.getTraces().find((t) => t.id === selectedTrace) : undefined;
   const applySize = (c: number, r: number) => {
-    engine.resize(c, r);
-    bump();
+    mutate(() => engine.resize(c, r));
   };
 
-  // Keyboard: R rotate, Delete remove, Esc disarm/deselect.
+  // Keyboard shortcuts. The handler is kept in a ref (latest-ref pattern) so it
+  // always sees fresh state without re-subscribing or stale closures.
+  const keyHandler = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyHandler.current = (e: KeyboardEvent) => {
+    const mod = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (mod && k === "z") {
+      e.preventDefault();
+      e.shiftKey ? redo() : undo();
+      return;
+    }
+    if (mod && k === "y") {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (mod) return; // leave other ctrl/cmd combos to the browser
+    if (k === "enter") {
+      if (routeMode === "free" && drawPath.length >= 2) finishFreeDraw();
+      else if (pending) confirmRoute();
+    } else if (k === "escape") {
+      setArmed(null);
+      setSelectedTrace(null);
+      clearTransient();
+    } else if ((k === "delete" || k === "backspace") && selectedTrace) {
+      mutate(() => engine.removeTrace(selectedTrace));
+      setSelectedTrace(null);
+    } else if (k === "r" && selected) {
+      mutate(() => engine.rotateBy90(selected));
+    } else if ((k === "delete" || k === "backspace") && selected) {
+      mutate(() => engine.removeComponent(selected));
+      setSelected(null);
+    } else if (k === "f") {
+      setFlipped((f) => !f);
+    }
+  };
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && pending) {
-        engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net });
-        setPending(null);
-        bump();
-      } else if (e.key === "Escape") {
-        setArmed(null);
-        setSelected(null);
-        setRouteStart(null);
-        setHoverHole(null);
-        setPending(null);
-        setPlacingId(null);
-        setSelectedTrace(null);
-      } else if ((e.key === "Delete" || e.key === "Backspace") && selectedTrace) {
-        engine.removeTrace(selectedTrace);
-        setSelectedTrace(null);
-        bump();
-      } else if ((e.key === "r" || e.key === "R") && selected) {
-        engine.rotateBy90(selected);
-        bump();
-      } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
-        engine.removeComponent(selected);
-        setSelected(null);
-        bump();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [selected, selectedTrace, pending, engine, bump]);
+    const h = (e: KeyboardEvent) => keyHandler.current(e);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   const place = (fp: string, hole: HoleCoord) => {
-    engine.addComponent({ footprint: fp, ref: nextRef(engine, refPrefixFor(fp)), anchor: hole });
-    bump();
+    mutate(() => engine.addComponent({ footprint: fp, ref: nextRef(engine, refPrefixFor(fp)), anchor: hole }));
   };
 
   const selComp = selected ? engine.getComponent(selected) : undefined;
@@ -273,14 +357,14 @@ export default function Home() {
                 {counts.bottomCrossings} crossing{counts.bottomCrossings === 1 ? "" : "s"}
               </span>
             </span>
-            <button onClick={() => { engine.autoroute(); setSelectedTrace(null); bump(); }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
+            <button onClick={() => { mutate(() => engine.autoroute()); setSelectedTrace(null); }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
               Autoroute
             </button>
             {counts.traces > 0 && (
-              <button onClick={() => { engine.clearTraces(); setSelectedTrace(null); bump(); }} style={btn}>Clear routing</button>
+              <button onClick={() => { mutate(() => engine.clearTraces()); setSelectedTrace(null); }} style={btn}>Clear routing</button>
             )}
             {counts.bottomCrossings > 0 && (
-              <button onClick={() => { engine.promoteCrossingsToJumper(); bump(); }} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
+              <button onClick={() => mutate(() => engine.promoteCrossingsToJumper())} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
                 Jumper-kan crossings
               </button>
             )}
@@ -299,6 +383,18 @@ export default function Home() {
             <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }}>
               {routing ? "Routing…" : "Route"}
             </button>
+            {routing && (
+              <button onClick={() => { setRouteMode((m) => (m === "auto" ? "free" : "auto")); setRouteStart(null); setDrawPath([]); setPending(null); }} style={btn}>
+                {routeMode === "auto" ? "mode: auto" : "mode: free-draw"}
+              </button>
+            )}
+            {routing && routeMode === "free" && drawPath.length > 0 && (
+              <>
+                <span style={{ fontSize: 13, color: palette.routeStart }}>{drawPath.length} holes</span>
+                <button onClick={finishFreeDraw} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Finish (Enter)</button>
+                <button onClick={() => setDrawPath([])} style={btn}>Cancel (Esc)</button>
+              </>
+            )}
             <button onClick={() => setFlipped((f) => !f)} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
               {flipped ? "Bottom view" : "Top view"}
             </button>
@@ -311,10 +407,10 @@ export default function Home() {
                 <span style={{ fontSize: 13, color: "var(--accent)" }}>
                   trace {selTrace.net ?? "(no net)"} / {selTrace.layer}
                 </span>
-                <button onClick={() => { engine.setTraceLayer(selTrace.id, selTrace.layer === "jumper" ? "bottom-copper" : "jumper"); bump(); }} style={btn}>
+                <button onClick={() => mutate(() => engine.setTraceLayer(selTrace.id, selTrace.layer === "jumper" ? "bottom-copper" : "jumper"))} style={btn}>
                   {selTrace.layer === "jumper" ? "→ bottom" : "→ jumper"}
                 </button>
-                <button onClick={() => { engine.removeTrace(selTrace.id); setSelectedTrace(null); bump(); }} style={btn}>Delete trace</button>
+                <button onClick={() => { mutate(() => engine.removeTrace(selTrace.id)); setSelectedTrace(null); }} style={btn}>Delete trace</button>
                 <span style={{ width: 1, height: 20, background: "var(--border)" }} />
               </>
             )}
@@ -323,8 +419,8 @@ export default function Home() {
                 <span style={{ fontSize: 13, color: "var(--accent)" }}>
                   {selComp.ref} ({selComp.footprint}) {selComp.rotation}&deg;
                 </span>
-                <button onClick={() => { engine.rotateBy90(selComp.id); bump(); }} style={btn}>Rotate (R)</button>
-                <button onClick={() => { engine.removeComponent(selComp.id); setSelected(null); bump(); }} style={btn}>Delete</button>
+                <button onClick={() => mutate(() => engine.rotateBy90(selComp.id))} style={btn}>Rotate (R)</button>
+                <button onClick={() => { mutate(() => engine.removeComponent(selComp.id)); setSelected(null); }} style={btn}>Delete</button>
                 <span style={{ width: 1, height: 20, background: "var(--border)" }} />
               </>
             )}
@@ -340,6 +436,8 @@ export default function Home() {
                 onChange={(e) => { const v = clamp(Number(e.target.value)); setRows(v); applySize(cols, v); }}
                 style={input} />
             </label>
+            <button onClick={undo} disabled={history.current.past.length === 0} style={{ ...btn, opacity: history.current.past.length ? 1 : 0.4 }} title="Undo (Ctrl+Z)">↶</button>
+            <button onClick={redo} disabled={history.current.future.length === 0} style={{ ...btn, opacity: history.current.future.length ? 1 : 0.4 }} title="Redo (Ctrl+Y)">↷</button>
             <button onClick={() => setShowBuildList((s) => !s)} style={{ ...btn, ...(showBuildList ? activeBtn : {}) }}>Build list</button>
             <button onClick={() => { void exportPdf(engine); }} style={btn}>PDF</button>
             <button onClick={() => exportPng(engine, { flipped })} style={btn}>PNG</button>
@@ -378,6 +476,9 @@ export default function Home() {
             onSelectTrace={setSelectedTrace}
             onSelect={setSelected}
             onPlace={place}
+            drawPath={drawPath}
+            onRouteFinish={finishFreeDraw}
+            onMoveStart={pushHistory}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}
           />
           )}

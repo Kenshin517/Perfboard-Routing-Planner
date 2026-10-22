@@ -48,10 +48,14 @@ interface Props {
   pendingPath?: HoleCoord[] | null;
   /** Live preview from the picked pad to the hovered hole (dashed). */
   previewPath?: HoleCoord[] | null;
+  /** Free-draw path committed so far (solid, with vertices). */
+  drawPath?: HoleCoord[] | null;
   /** An unplaced component being dropped: the next click places it. */
   placingComponentId?: string | null;
   onRoutePick?: (hole: HoleCoord) => void;
+  onRouteFinish?: () => void;
   onHover?: (hole: HoleCoord) => void;
+  onMoveStart?: () => void;
   onPlaceComponent?: (id: string, hole: HoleCoord) => void;
   onSelectTrace?: (id: string | null) => void;
   onSelect?: (id: string | null) => void;
@@ -81,9 +85,12 @@ export default function PerfboardCanvas({
   selectedTraceId = null,
   pendingPath = null,
   previewPath = null,
+  drawPath = null,
   placingComponentId = null,
   onRoutePick,
+  onRouteFinish,
   onHover,
+  onMoveStart,
   onPlaceComponent,
   onSelectTrace,
   onSelect,
@@ -95,7 +102,7 @@ export default function PerfboardCanvas({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<ViewState>({ scale: 1, offsetX: 0, offsetY: 0 });
   const pan = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
-  const compDrag = useRef<{ id: string; dc: number; dr: number } | null>(null);
+  const compDrag = useRef<{ id: string; dc: number; dr: number; moved: boolean } | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -278,6 +285,15 @@ export default function PerfboardCanvas({
     };
     if (previewPath && previewPath.length >= 2) drawPoly(previewPath, "rgba(255,255,255,0.45)", Math.max(1.5, step * 0.12), [step * 0.25, step * 0.2]);
     if (pendingPath && pendingPath.length >= 2) drawPoly(pendingPath, palette.routeStart, Math.max(2.5, step * 0.22), []);
+    if (drawPath && drawPath.length >= 1) {
+      if (drawPath.length >= 2) drawPoly(drawPath, palette.routeStart, Math.max(2.5, step * 0.2), []);
+      ctx.fillStyle = palette.routeStart;
+      for (const h of drawPath) {
+        ctx.beginPath();
+        ctx.arc(sx(h.col), sy(h.row), Math.max(2, step * 0.16), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
 
     // Route start highlight.
     if (routing && routeStart) {
@@ -334,7 +350,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
@@ -359,7 +375,7 @@ export default function PerfboardCanvas({
       onSelect?.(hit.id);
       onSelectTrace?.(null);
       const c = engine.getComponent(hit.id)!;
-      compDrag.current = { id: hit.id, dc: hole.col - c.anchor.col, dr: hole.row - c.anchor.row };
+      compDrag.current = { id: hit.id, dc: hole.col - c.anchor.col, dr: hole.row - c.anchor.row, moved: false };
       return;
     }
     const tHit = traceHitTest(worldAt(px, py));
@@ -374,7 +390,7 @@ export default function PerfboardCanvas({
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (routing && routeStart) {
+    if (routing) {
       const rect = canvasRef.current!.getBoundingClientRect();
       onHover?.(holeAt(e.clientX - rect.left, e.clientY - rect.top));
       return;
@@ -383,6 +399,10 @@ export default function PerfboardCanvas({
       const rect = canvasRef.current!.getBoundingClientRect();
       const hole = holeAt(e.clientX - rect.left, e.clientY - rect.top);
       const d = compDrag.current;
+      if (!d.moved) {
+        onMoveStart?.(); // snapshot for undo on the first actual move
+        d.moved = true;
+      }
       onMove?.(d.id, { col: hole.col - d.dc, row: hole.row - d.dr });
       return;
     }
@@ -419,6 +439,7 @@ export default function PerfboardCanvas({
         onMouseMove={onMouseMove}
         onMouseUp={endDrag}
         onMouseLeave={endDrag}
+        onDoubleClick={() => { if (routing) onRouteFinish?.(); }}
         onWheel={onWheel}
       />
     </div>
