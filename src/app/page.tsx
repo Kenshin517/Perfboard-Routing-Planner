@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { createBoard, BoardEngine } from "@/engine/BoardEngine";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
@@ -8,6 +9,8 @@ import { saveProject, loadProject, downloadProject, readProjectFile } from "@/st
 import { parseKicadXmlNetlist } from "@/engine/netlist";
 import { exportPdf } from "@/export/pdf";
 import { exportPng } from "@/export/png";
+
+const Perfboard3D = dynamic(() => import("@/components/Perfboard3D"), { ssr: false });
 
 function prefixFor(fp: string): string {
   if (fp.startsWith("DIP")) return "U";
@@ -47,6 +50,7 @@ export default function Home() {
   const [flipped, setFlipped] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [showBuildList, setShowBuildList] = useState(false);
+  const [mode3d, setMode3d] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const netlistRef = useRef<HTMLInputElement>(null);
@@ -234,6 +238,9 @@ export default function Home() {
             <button onClick={() => setFlipped((f) => !f)} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
               {flipped ? "Bottom view" : "Top view"}
             </button>
+            <button onClick={() => setMode3d((v) => !v)} style={{ ...btn, ...(mode3d ? activeBtn : {}) }}>
+              {mode3d ? "3D" : "2D"}
+            </button>
             <span style={{ width: 1, height: 20, background: "var(--border)" }} />
             {selTrace && (
               <>
@@ -283,6 +290,9 @@ export default function Home() {
         </header>
 
         <div style={{ flex: 1, minHeight: 0 }}>
+          {mode3d ? (
+            <Perfboard3D engine={engine} rev={rev} />
+          ) : (
           <PerfboardCanvas
             engine={engine}
             rev={rev}
@@ -301,6 +311,7 @@ export default function Home() {
             onPlace={place}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}
           />
+          )}
         </div>
 
         {showBuildList && <BuildListPanel text={engine.buildList()} onClose={() => setShowBuildList(false)} />}

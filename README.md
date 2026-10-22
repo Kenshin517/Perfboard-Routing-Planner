@@ -3,9 +3,9 @@
 Tool web untuk mempercepat planning wiring di **dot perfboard (PCB bolong)** dengan
 meminimalkan jumper. Lihat `docs/spec.md` untuk spec lengkap.
 
-> **Status:** Ticket 01 — board skeleton. Scaffold + `BoardEngine` seam + render grid
-> Canvas + test seam. Fitur lain (import netlist, placement, routing, autoroute, dll.)
-> menyusul per tiket.
+> **Status:** v1 lengkap (tiket 01–10). Import netlist → place komponen → manual/auto
+> routing dengan deteksi crossing & jumper → build-list → export PDF 1:1 + PNG → 3D view.
+> 58 engine test hijau.
 
 ## Jalanin lokal
 
@@ -52,15 +52,29 @@ docs/
   spec.md               # spec v1
 ```
 
-## Roadmap tiket
+## Alur pakai
 
-1. ✅ **Board skeleton** (ini)
-2. Taruh komponen manual dari library footprint
-3. Persistence: autosave + export/import JSON
-4. Import netlist + matching library + ratsnest
-5. Manual routing (click pad-to-pad) + flip view
-6. Crossing detection + layer jumper + counter
-7. Build-list teks
-8. Export PDF 1:1 + PNG
-9. Autoroute (greedy maze/A\* + promote-to-jumper)
-10. [Fase 2] 3D view (box primitive)
+1. **Import netlist** (KiCad XML) atau taruh komponen manual dari palette kiri.
+2. Atur penempatan: drag geser, R rotate, Del hapus. Airwire (garis putus hijau) nunjukin koneksi yang belum di-route.
+3. **Route**: klik tombol Route → klik pad asal → pad tujuan (auto-path). Atau **Autoroute** sekali klik.
+4. Crossing bare-wire ditandai **merah**; klik **Jumper-kan crossings** atau pilih trace → `→ jumper`. Counter nunjukin trace/jumper/crossing.
+5. **Flip** (Top/Bottom) buat lihat sisi solder (mirror).
+6. **Build list** = resep rakit teks. **PDF** = cetak 1:1 (2 halaman: placement + routing mirror, ada kotak kalibrasi 50mm). **3D** = preview box komponen.
+7. Auto-save ke browser; **Export/Import** `.json` buat backup/pindah device.
+
+## Roadmap tiket (semua ✅)
+
+1. ✅ Board skeleton
+2. ✅ Place components dari library footprint
+3. ✅ Persistence: autosave + export/import JSON
+4. ✅ Import netlist + matching library + ratsnest
+5. ✅ Manual routing (click pad-to-pad) + flip view
+6. ✅ Crossing detection + layer jumper + counter
+7. ✅ Build-list teks
+8. ✅ Export PDF 1:1 + PNG
+9. ✅ Autoroute (greedy A\* + promote-to-jumper)
+10. ✅ 3D view (box primitive, three.js)
+
+## Dependencies
+
+`next`, `react`, `jspdf` (export PDF, lazy-loaded), `three` (3D, lazy-loaded). Dev: `typescript`, `vitest`, `@types/*`.
