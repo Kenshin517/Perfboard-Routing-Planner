@@ -6,6 +6,8 @@ import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
 import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
 import { parseKicadXmlNetlist } from "@/engine/netlist";
+import { exportPdf } from "@/export/pdf";
+import { exportPng } from "@/export/png";
 
 function prefixFor(fp: string): string {
   if (fp.startsWith("DIP")) return "U";
@@ -262,6 +264,8 @@ export default function Home() {
                 style={input} />
             </label>
             <button onClick={() => setShowBuildList((s) => !s)} style={{ ...btn, ...(showBuildList ? activeBtn : {}) }}>Build list</button>
+            <button onClick={() => { void exportPdf(engine); }} style={btn}>PDF</button>
+            <button onClick={() => exportPng(engine, { flipped })} style={btn}>PNG</button>
             <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
             <span style={{ width: 1, height: 20, background: "var(--border)" }} />
             <button onClick={() => netlistRef.current?.click()} style={btn}>Import netlist</button>
