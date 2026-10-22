@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseKicadXmlNetlist, parseKicadNetNetlist, parseNetlist, mapKicadFootprint } from "./netlist";
+import { parseKicadXmlNetlist, parseKicadNetNetlist, parseOrcadPcb2Netlist, parseNetlist, mapKicadFootprint } from "./netlist";
 import { createBoard } from "./BoardEngine";
 
 const SAMPLE_NET = `(export (version "E")
@@ -77,10 +77,47 @@ describe("KiCad .net (S-expression) parser", () => {
   });
 });
 
+const SAMPLE_ORCAD = `( { Eeschema Netlist Version 1.1  11/22/2026 }
+ ( /00000001 $noname U3 L7805
+  ( 1 N-000001 )
+  ( 2 GND )
+  ( 3 N-000002 )
+ )
+ ( /00000002 $noname U2 L7805
+  ( 1 N-000002 )
+  ( 2 GND )
+  ( 3 N-000003 )
+ )
+ ( /00000003 LED:LED_D5.0mm D1 LED
+  ( 1 N-000003 )
+  ( 2 N-000004 )
+ )
+)`;
+
+describe("OrcadPCB2 (.net) parser", () => {
+  it("parses components and builds nets from inline pin/net pairs", () => {
+    const p = parseOrcadPcb2Netlist(SAMPLE_ORCAD);
+    expect(p.components.map((c) => c.ref)).toEqual(["U3", "U2", "D1"]);
+    expect(p.components[0]).toEqual({ ref: "U3", value: "L7805", footprint: "" }); // $noname -> empty
+    expect(p.components[2].footprint).toBe("LED:LED_D5.0mm");
+
+    const gnd = p.nets.find((n) => n.name === "GND")!;
+    expect(gnd.nodes).toHaveLength(2); // U3/2, U2/2
+    const shared = p.nets.find((n) => n.name === "N-000002")!;
+    expect(shared.nodes).toContainEqual({ ref: "U3", pin: "3" });
+    expect(shared.nodes).toContainEqual({ ref: "U2", pin: "1" });
+  });
+
+  it("rejects an empty/garbage list", () => {
+    expect(() => parseOrcadPcb2Netlist("( { only a header } )")).toThrow();
+  });
+});
+
 describe("parseNetlist auto-detect", () => {
   it("picks the right parser by content", () => {
-    expect(parseNetlist(SAMPLE).components).toHaveLength(3);
-    expect(parseNetlist(SAMPLE_NET).components).toHaveLength(3);
+    expect(parseNetlist(SAMPLE).components).toHaveLength(3); // XML
+    expect(parseNetlist(SAMPLE_NET).components).toHaveLength(3); // KiCad S-expr
+    expect(parseNetlist(SAMPLE_ORCAD).components).toHaveLength(3); // OrcadPCB2
     expect(() => parseNetlist("just some text")).toThrow();
   });
 });

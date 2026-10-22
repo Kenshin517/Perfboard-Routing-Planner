@@ -172,12 +172,63 @@ export function parseKicadNetNetlist(src: string): ParsedNetlist {
   return { components, nets };
 }
 
-/** Auto-detect XML vs S-expression and parse accordingly. */
+// ---- OrcadPCB2 (.net) netlist (KiCad "OrcadPCB2" export tab) ----
+
+/**
+ * Parse the OrcadPCB2 netlist KiCad exports from the OrcadPCB2 tab. Structure:
+ *
+ *   ( { Eeschema Netlist Version 1.1 ... }
+ *    ( <tstamp> <footprint> <ref> <value>
+ *      ( <pad> <netname> )
+ *      ... )
+ *    ... )
+ *
+ * Net membership is implicit: each pad lists the net it's on, so we group pads
+ * by net name across all components.
+ */
+export function parseOrcadPcb2Netlist(src: string): ParsedNetlist {
+  // Strip the { ... } header/comment blocks so the rest is a clean S-expression.
+  const cleaned = src.replace(/\{[^{}]*\}/g, " ");
+  const root = parseSExpr(cleaned);
+  if (!isList(root)) throw new Error("parseOrcadPcb2Netlist: expected a list");
+
+  const components: NetlistComponent[] = [];
+  const netMap = new Map<string, { ref: string; pin: string }[]>();
+
+  for (const comp of root) {
+    if (!isList(comp) || comp.length < 4) continue;
+    const [, footprint, ref, value] = comp;
+    if (typeof ref !== "string" || typeof footprint !== "string") continue;
+    components.push({
+      ref,
+      value: typeof value === "string" ? value : "",
+      footprint: footprint === "$noname" ? "" : footprint,
+    });
+    for (let i = 4; i < comp.length; i++) {
+      const node = comp[i];
+      if (isList(node) && typeof node[0] === "string" && typeof node[1] === "string") {
+        const [pin, net] = node;
+        const arr = netMap.get(net) ?? [];
+        arr.push({ ref, pin });
+        netMap.set(net, arr);
+      }
+    }
+  }
+
+  if (components.length === 0) throw new Error("parseOrcadPcb2Netlist: no components found");
+  const nets: NetlistNet[] = Array.from(netMap, ([name, nodes]) => ({ name, nodes }));
+  return { components, nets };
+}
+
+/** Auto-detect the netlist format (KiCad XML / KiCad S-expr / OrcadPCB2) and parse. */
 export function parseNetlist(src: string): ParsedNetlist {
   const trimmed = src.trimStart();
   if (trimmed.startsWith("<")) return parseKicadXmlNetlist(src);
-  if (trimmed.startsWith("(")) return parseKicadNetNetlist(src);
-  throw new Error("parseNetlist: unrecognised netlist format (expected KiCad XML or .net)");
+  if (trimmed.startsWith("(")) {
+    if (/\(\s*export\b/.test(src)) return parseKicadNetNetlist(src);
+    return parseOrcadPcb2Netlist(src); // OrcadPCB2 has no (export ...) head
+  }
+  throw new Error("parseNetlist: unrecognised netlist format (expected KiCad XML, .net, or OrcadPCB2)");
 }
 
 /**
