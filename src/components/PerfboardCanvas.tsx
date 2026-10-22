@@ -8,6 +8,16 @@ import { colToLabel, rowToLabel } from "@/engine/coordinates";
 const CELL_PX = 30;
 const MARGIN = 1.2;
 
+/** Distance from point p to segment ab, in the same units as the inputs. */
+function pointSegDist(p: { col: number; row: number }, a: HoleCoord, b: HoleCoord): number {
+  const dx = b.col - a.col, dy = b.row - a.row;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((p.col - a.col) * dx + (p.row - a.row) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = a.col + t * dx, cy = a.row + t * dy;
+  return Math.hypot(p.col - cx, p.row - cy);
+}
+
 interface ViewState {
   scale: number;
   offsetX: number;
@@ -29,7 +39,11 @@ interface Props {
   /** Routing mode: clicks pick pads instead of placing/selecting. */
   routing?: boolean;
   routeStart?: HoleCoord | null;
+  /** Ids of traces currently involved in a crossing (drawn red). */
+  crossingIds?: string[];
+  selectedTraceId?: string | null;
   onRoutePick?: (hole: HoleCoord) => void;
+  onSelectTrace?: (id: string | null) => void;
   onSelect?: (id: string | null) => void;
   onPlace?: (footprint: string, hole: HoleCoord) => void;
   onMove?: (id: string, anchor: HoleCoord) => void;
@@ -53,7 +67,10 @@ export default function PerfboardCanvas({
   flipped = false,
   routing = false,
   routeStart = null,
+  crossingIds = [],
+  selectedTraceId = null,
   onRoutePick,
+  onSelectTrace,
   onSelect,
   onPlace,
   onMove,
@@ -118,6 +135,30 @@ export default function PerfboardCanvas({
       };
     });
   }, [engine]);
+
+  // Continuous world coords (flip-aware) for trace hit-testing.
+  const worldAt = useCallback(
+    (px: number, py: number) => {
+      const wc = (px - view.offsetX) / (CELL_PX * view.scale);
+      const wr = (py - view.offsetY) / (CELL_PX * view.scale);
+      return { col: flipped ? engine.cols - 1 - wc : wc, row: wr };
+    },
+    [view, flipped, engine],
+  );
+
+  const traceHitTest = useCallback(
+    (world: { col: number; row: number }): string | null => {
+      const traces = engine.getTraces();
+      for (let i = traces.length - 1; i >= 0; i--) {
+        const t = traces[i];
+        for (let s = 0; s + 1 < t.path.length; s++) {
+          if (pointSegDist(world, t.path[s], t.path[s + 1]) < 0.35) return t.id;
+        }
+      }
+      return null;
+    },
+    [engine],
+  );
 
   const hitTest = useCallback(
     (hole: HoleCoord): CompBox | null => {
@@ -184,18 +225,34 @@ export default function PerfboardCanvas({
     }
 
     // Traces.
+    const crossSet = new Set(crossingIds);
     for (const t of engine.getTraces()) {
       if (t.path.length < 2) continue;
       ctx.save();
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
-      if (t.layer === "jumper") {
+      const crossing = crossSet.has(t.id);
+      if (crossing) {
+        ctx.strokeStyle = "#ff5a5a";
+        ctx.lineWidth = Math.max(2, step * 0.2);
+      } else if (t.layer === "jumper") {
         ctx.strokeStyle = "#e0b34a";
         ctx.lineWidth = Math.max(1.5, step * 0.14);
         ctx.setLineDash([step * 0.35, step * 0.25]);
       } else {
         ctx.strokeStyle = "#49c06a";
         ctx.lineWidth = Math.max(2, step * 0.18);
+      }
+      if (t.id === selectedTraceId) {
+        ctx.save();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = Math.max(4, step * 0.3);
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.moveTo(sx(t.path[0].col), sy(t.path[0].row));
+        for (let i = 1; i < t.path.length; i++) ctx.lineTo(sx(t.path[i].col), sy(t.path[i].row));
+        ctx.stroke();
+        ctx.restore();
       }
       ctx.beginPath();
       ctx.moveTo(sx(t.path[0].col), sy(t.path[0].row));
@@ -261,7 +318,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
@@ -280,12 +337,20 @@ export default function PerfboardCanvas({
     const hit = hitTest(hole);
     if (hit) {
       onSelect?.(hit.id);
+      onSelectTrace?.(null);
       const c = engine.getComponent(hit.id)!;
       compDrag.current = { id: hit.id, dc: hole.col - c.anchor.col, dr: hole.row - c.anchor.row };
-    } else {
-      onSelect?.(null);
-      pan.current = { x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY };
+      return;
     }
+    const tHit = traceHitTest(worldAt(px, py));
+    if (tHit) {
+      onSelectTrace?.(tHit);
+      onSelect?.(null);
+      return;
+    }
+    onSelect?.(null);
+    onSelectTrace?.(null);
+    pan.current = { x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY };
   };
 
   const onMouseMove = (e: React.MouseEvent) => {

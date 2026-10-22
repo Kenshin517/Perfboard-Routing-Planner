@@ -43,6 +43,7 @@ export default function Home() {
   const [routing, setRouting] = useState(false);
   const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
   const [flipped, setFlipped] = useState(false);
+  const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const netlistRef = useRef<HTMLInputElement>(null);
@@ -137,6 +138,10 @@ export default function Home() {
 
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
   const airwires = engine.ratsnest();
+  const crossPairs = engine.crossings();
+  const crossingIds = Array.from(new Set(crossPairs.flatMap((p) => [p.a, p.b])));
+  const counts = engine.counts();
+  const selTrace = selectedTrace ? engine.getTraces().find((t) => t.id === selectedTrace) : undefined;
   const applySize = (c: number, r: number) => {
     engine.resize(c, r);
     bump();
@@ -149,6 +154,11 @@ export default function Home() {
         setArmed(null);
         setSelected(null);
         setRouteStart(null);
+        setSelectedTrace(null);
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selectedTrace) {
+        engine.removeTrace(selectedTrace);
+        setSelectedTrace(null);
+        bump();
       } else if ((e.key === "r" || e.key === "R") && selected) {
         engine.rotateBy90(selected);
         bump();
@@ -160,7 +170,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, engine]);
+  }, [selected, selectedTrace, engine]);
 
   const place = (fp: string, hole: HoleCoord) => {
     engine.addComponent({ footprint: fp, ref: nextRef(engine, prefixFor(fp)), anchor: hole });
@@ -198,9 +208,17 @@ export default function Home() {
             {engine.cols} × {engine.rows} &middot; {engine.getComponents().length} parts
           </span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 13, color: airwires.length ? "#8fd79a" : "var(--muted)" }}>
-              {airwires.length} airwire{airwires.length === 1 ? "" : "s"}
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              {airwires.length} airwire{airwires.length === 1 ? "" : "s"} &middot; {counts.jumpers} jumper{counts.jumpers === 1 ? "" : "s"} &middot;{" "}
+              <span style={{ color: counts.bottomCrossings ? "#ff5a5a" : "var(--muted)", fontWeight: counts.bottomCrossings ? 600 : 400 }}>
+                {counts.bottomCrossings} crossing{counts.bottomCrossings === 1 ? "" : "s"}
+              </span>
             </span>
+            {counts.bottomCrossings > 0 && (
+              <button onClick={() => { engine.promoteCrossingsToJumper(); bump(); }} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
+                Jumper-kan crossings
+              </button>
+            )}
             <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }}>
               {routing ? "Routing…" : "Route"}
             </button>
@@ -208,6 +226,18 @@ export default function Home() {
               {flipped ? "Bottom view" : "Top view"}
             </button>
             <span style={{ width: 1, height: 20, background: "var(--border)" }} />
+            {selTrace && (
+              <>
+                <span style={{ fontSize: 13, color: "var(--accent)" }}>
+                  trace {selTrace.net ?? "(no net)"} / {selTrace.layer}
+                </span>
+                <button onClick={() => { engine.setTraceLayer(selTrace.id, selTrace.layer === "jumper" ? "bottom-copper" : "jumper"); bump(); }} style={btn}>
+                  {selTrace.layer === "jumper" ? "→ bottom" : "→ jumper"}
+                </button>
+                <button onClick={() => { engine.removeTrace(selTrace.id); setSelectedTrace(null); bump(); }} style={btn}>Delete trace</button>
+                <span style={{ width: 1, height: 20, background: "var(--border)" }} />
+              </>
+            )}
             {selComp && (
               <>
                 <span style={{ fontSize: 13, color: "var(--accent)" }}>
@@ -251,7 +281,10 @@ export default function Home() {
             flipped={flipped}
             routing={routing}
             routeStart={routeStart}
+            crossingIds={crossingIds}
+            selectedTraceId={selectedTrace}
             onRoutePick={onRoutePick}
+            onSelectTrace={setSelectedTrace}
             onSelect={setSelected}
             onPlace={place}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}

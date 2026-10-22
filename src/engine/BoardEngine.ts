@@ -22,6 +22,7 @@ import { coordToLabel } from "./coordinates";
 import { DEFAULT_FOOTPRINTS, makeGenericFootprint, rotateOffset } from "./footprints";
 import { mapKicadFootprint, type ParsedNetlist } from "./netlist";
 import { findPath } from "./router";
+import { pathsIntersect } from "./crossings";
 
 export interface RouteOptions {
   layer?: Layer;
@@ -433,6 +434,49 @@ export class BoardEngine {
     const t = this.state.traces.find((t) => t.id === id);
     if (!t) throw new Error(`setTraceLayer: no trace "${id}"`);
     t.layer = layer;
+  }
+
+  // ---- crossing detection ----
+
+  /**
+   * Pairs of bottom-copper traces that would short: different nets whose bare
+   * wires touch or cross. (Jumper-layer traces are insulated and never conflict.)
+   */
+  crossings(): { a: string; b: string }[] {
+    const bare = this.state.traces.filter((t) => t.layer === "bottom-copper");
+    const netKey = (t: Trace) => t.net ?? `__trace_${t.id}`;
+    const out: { a: string; b: string }[] = [];
+    for (let i = 0; i < bare.length; i++) {
+      for (let j = i + 1; j < bare.length; j++) {
+        if (netKey(bare[i]) === netKey(bare[j])) continue; // same net = junction, fine
+        if (pathsIntersect(bare[i].path, bare[j].path)) out.push({ a: bare[i].id, b: bare[j].id });
+      }
+    }
+    return out;
+  }
+
+  /** Trace counts, for the score display. */
+  counts(): { traces: number; jumpers: number; bottomCrossings: number } {
+    return {
+      traces: this.state.traces.length,
+      jumpers: this.state.traces.filter((t) => t.layer === "jumper").length,
+      bottomCrossings: this.crossings().length,
+    };
+  }
+
+  /**
+   * Resolve all bottom-copper crossings by promoting conflicting traces to the
+   * jumper layer (greedy). Returns how many traces were promoted.
+   */
+  promoteCrossingsToJumper(): number {
+    let promoted = 0;
+    for (let guard = 0; guard < 100000; guard++) {
+      const cx = this.crossings();
+      if (cx.length === 0) break;
+      this.setTraceLayer(cx[0].b, "jumper");
+      promoted++;
+    }
+    return promoted;
   }
 
   // ---- serialisation ----
