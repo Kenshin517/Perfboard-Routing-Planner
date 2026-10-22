@@ -106,20 +106,31 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     board.position.set(cx, -boardThickness / 2, cz);
     content.add(board);
 
-    // Pads (instanced).
-    const padMesh = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.18, 0.18, 0.05, 10),
-      new THREE.MeshStandardMaterial({ color: hexToInt(palette.pad), metalness: 0.4, roughness: 0.5 }),
-      cfg.cols * cfg.rows,
-    );
+    // Pads on BOTH sides (top = component side, bottom = solder side), so the
+    // bottom isn't a blank slab when you orbit under the board.
+    const padGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.05, 10);
+    const padMat = new THREE.MeshStandardMaterial({ color: hexToInt(palette.pad), metalness: 0.4, roughness: 0.5 });
     const m = new THREE.Matrix4();
-    let i = 0;
-    for (let r = 0; r < cfg.rows; r++)
-      for (let c = 0; c < cfg.cols; c++) {
-        m.makeTranslation(c, 0.02, r);
-        padMesh.setMatrixAt(i++, m);
-      }
-    content.add(padMesh);
+    for (const yPad of [0.02, -boardThickness - 0.02]) {
+      const padMesh = new THREE.InstancedMesh(padGeo, padMat, cfg.cols * cfg.rows);
+      let i = 0;
+      for (let r = 0; r < cfg.rows; r++)
+        for (let c = 0; c < cfg.cols; c++) {
+          m.makeTranslation(c, yPad, r);
+          padMesh.setMatrixAt(i++, m);
+        }
+      content.add(padMesh);
+    }
+
+    // Traces on the solder (bottom) side.
+    const yTrace = -boardThickness - 0.06;
+    for (const t of engine.getTraces()) {
+      if (t.path.length < 2) continue;
+      const pts = t.path.map((h) => new THREE.Vector3(h.col, yTrace, h.row));
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: hexToInt(t.layer === "jumper" ? palette.jumperTrace : palette.bottomTrace) });
+      content.add(new THREE.Line(geo, mat));
+    }
 
     // Component boxes.
     const compMat = new THREE.MeshStandardMaterial({ color: hexToInt(palette.comp3d), roughness: 0.6 });

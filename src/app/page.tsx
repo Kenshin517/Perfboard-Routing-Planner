@@ -44,6 +44,7 @@ export default function Home() {
   const [drawPath, setDrawPath] = useState<HoleCoord[]>([]);
   const [placingId, setPlacingId] = useState<string | null>(null);
   const [flipped, setFlipped] = useState(false);
+  const [flipScale, setFlipScale] = useState(1);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [showBuildList, setShowBuildList] = useState(false);
   const [mode3d, setMode3d] = useState(false);
@@ -233,6 +234,15 @@ export default function Home() {
     setPlacingId(null);
   };
 
+  // Flip with a quick "card flip" squish so the board visibly turns over.
+  const doFlip = () => {
+    setFlipScale(0);
+    window.setTimeout(() => {
+      setFlipped((f) => !f);
+      setFlipScale(1);
+    }, 170);
+  };
+
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
   const previewPath =
     routing && routeMode === "auto" && routeStart && hoverHole
@@ -283,7 +293,7 @@ export default function Home() {
       mutate(() => engine.removeComponent(selected));
       setSelected(null);
     } else if (k === "f") {
-      setFlipped((f) => !f);
+      doFlip();
     }
   };
   useEffect(() => {
@@ -395,7 +405,7 @@ export default function Home() {
                 <button onClick={() => setDrawPath([])} style={btn}>Cancel (Esc)</button>
               </>
             )}
-            <button onClick={() => setFlipped((f) => !f)} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
+            <button onClick={doFlip} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
               {flipped ? "Bottom view" : "Top view"}
             </button>
             <button onClick={() => setMode3d((v) => !v)} style={{ ...btn, ...(mode3d ? activeBtn : {}) }}>
@@ -451,7 +461,14 @@ export default function Home() {
           </div>
         </header>
 
-        <div style={{ flex: 1, minHeight: 0 }}>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            transform: mode3d ? undefined : `scaleX(${flipScale})`,
+            transition: "transform 0.17s ease-in-out",
+          }}
+        >
           {mode3d ? (
             <Perfboard3D engine={engine} rev={rev} />
           ) : (
