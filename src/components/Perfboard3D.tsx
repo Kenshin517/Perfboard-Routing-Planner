@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import { palette, hexToInt } from "@/lib/theme";
+import { buildComponentModel } from "./componentModels";
 
 /**
  * Phase-2 3D view: simple box primitives per component on a board plane, for
@@ -132,15 +133,18 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
       content.add(new THREE.Line(geo, mat));
     }
 
-    // Component boxes.
-    const compMat = new THREE.MeshStandardMaterial({ color: hexToInt(palette.comp3d), roughness: 0.6 });
-    for (const comp of engine.getComponents()) {
+    // Built-in realistic component models (placed parts only).
+    for (const comp of engine.getPlacedComponents()) {
       const bb = engine.componentBounds(comp.id);
       const hMm = engine.getFootprint(comp.footprint)?.body.height ?? 6;
-      const hUnits = Math.max(0.4, hMm / cfg.pitchMm);
-      const box = new THREE.Mesh(new THREE.BoxGeometry(bb.maxC - bb.minC + 0.8, hUnits, bb.maxR - bb.minR + 0.8), compMat);
-      box.position.set((bb.minC + bb.maxC) / 2, hUnits / 2 + 0.05, (bb.minR + bb.maxR) / 2);
-      content.add(box);
+      content.add(
+        buildComponentModel({
+          ...bb,
+          heightUnits: Math.max(0.4, hMm / cfg.pitchMm),
+          footprintName: comp.footprint,
+          value: comp.value ?? "",
+        }),
+      );
     }
 
     // Aim the camera at the board (keep user's current orbit distance if already set).
@@ -154,13 +158,15 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
   return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
 }
 
-function disposeGroup(group: THREE.Group) {
+function disposeGroup(group: THREE.Object3D) {
+  // Recurse: component models are nested groups of meshes.
   for (const obj of group.children.slice()) {
+    disposeGroup(obj);
     group.remove(obj);
-    const mesh = obj as THREE.Mesh;
-    mesh.geometry?.dispose?.();
-    const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-    else mat?.dispose?.();
   }
+  const mesh = group as THREE.Mesh;
+  mesh.geometry?.dispose?.();
+  const material = mesh.material as THREE.Material | THREE.Material[] | undefined;
+  if (Array.isArray(material)) material.forEach((x) => x.dispose());
+  else material?.dispose?.();
 }

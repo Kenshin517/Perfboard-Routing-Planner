@@ -29,6 +29,21 @@ export const printPalette = {
   black: [0, 0, 0] as [number, number, number],
 };
 
+/** Realistic material colors for the built-in 3D component models (three.js ints). */
+export const modelColors = {
+  blackPlastic: 0x1c1c1e,
+  metalTab: 0xb8bcc2,
+  goldPin: 0xd4a84b,
+  legMetal: 0xc8ccd2,
+  ledRed: 0xd23b3b,
+  ledDome: 0xe4746f,
+  resistorBody: 0xd9c08a,
+  pcbGreen: 0x1f6b3a,
+  shieldCan: 0xb9bdc4,
+  capBody: 0x2b4b8c,
+  genericBody: 0x3a6bd6,
+} as const;
+
 /** "#rrggbb" -> 0xrrggbb for three.js. */
 export function hexToInt(hex: string): number {
   return parseInt(hex.replace("#", ""), 16);
