@@ -44,6 +44,7 @@ export default function Home() {
   const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
+  const [showBuildList, setShowBuildList] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const netlistRef = useRef<HTMLInputElement>(null);
@@ -201,7 +202,7 @@ export default function Home() {
       </aside>
 
       {/* Canvas + chrome */}
-      <section style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+      <section style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, position: "relative" }}>
         <header style={headerStyle}>
           <strong style={{ fontSize: 15 }}>Perfboard Routing Planner</strong>
           <span style={{ color: "var(--muted)", fontSize: 13 }}>
@@ -260,6 +261,7 @@ export default function Home() {
                 onChange={(e) => { const v = clamp(Number(e.target.value)); setRows(v); applySize(cols, v); }}
                 style={input} />
             </label>
+            <button onClick={() => setShowBuildList((s) => !s)} style={{ ...btn, ...(showBuildList ? activeBtn : {}) }}>Build list</button>
             <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
             <span style={{ width: 1, height: 20, background: "var(--border)" }} />
             <button onClick={() => netlistRef.current?.click()} style={btn}>Import netlist</button>
@@ -290,6 +292,8 @@ export default function Home() {
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}
           />
         </div>
+
+        {showBuildList && <BuildListPanel text={engine.buildList()} onClose={() => setShowBuildList(false)} />}
 
         <footer style={footerStyle}>
           Pilih part di kiri &rarr; klik board untuk taruh &middot; klik part untuk pilih/geser &middot; R = rotate, Del = hapus &middot; scroll = zoom, drag = pan
@@ -334,6 +338,48 @@ const footerStyle: React.CSSProperties = {
   background: "var(--panel)",
   borderTop: "1px solid var(--border)",
 };
+function BuildListPanel({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 340,
+        background: "var(--panel)",
+        borderLeft: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        boxShadow: "-8px 0 24px rgba(0,0,0,0.3)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+        <strong style={{ fontSize: 14 }}>Build list</strong>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button onClick={() => navigator.clipboard?.writeText(text)} style={btn}>Copy</button>
+          <button onClick={onClose} style={btn}>Close</button>
+        </div>
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: 12,
+          overflow: "auto",
+          flex: 1,
+          fontSize: 12.5,
+          lineHeight: 1.5,
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          color: "var(--text)",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  );
+}
+
 const lbl: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
 const input: React.CSSProperties = { width: 56, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 };
 const btn: React.CSSProperties = { padding: "5px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" };

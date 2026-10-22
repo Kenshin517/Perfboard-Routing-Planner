@@ -479,6 +479,53 @@ export class BoardEngine {
     return promoted;
   }
 
+  // ---- build-list ("resep rakit") ----
+
+  /** Human-readable assembly guide: placement, connections, and a summary. */
+  buildList(): string {
+    const label = (c: HoleCoord) => coordToLabel(c);
+    const natCmp = (a: string, b: string) =>
+      a.replace(/\d+/g, (n) => n.padStart(6, "0")).localeCompare(b.replace(/\d+/g, (n) => n.padStart(6, "0")));
+
+    const lines: string[] = [];
+    lines.push("PLACEMENT");
+    const comps = this.getComponents().sort((a, b) => natCmp(a.ref, b.ref));
+    if (comps.length === 0) lines.push("  (belum ada komponen)");
+    for (const c of comps) {
+      const pins = this.pinPositions(c.id).map((p) => p.coord);
+      const minC = Math.min(...pins.map((p) => p.col)), maxC = Math.max(...pins.map((p) => p.col));
+      const minR = Math.min(...pins.map((p) => p.row)), maxR = Math.max(...pins.map((p) => p.row));
+      const range =
+        minC === maxC && minR === maxR
+          ? label({ col: minC, row: minR })
+          : `${label({ col: minC, row: minR })}..${label({ col: maxC, row: maxR })}`;
+      const rot = c.rotation ? ` @${c.rotation}°` : "";
+      const val = c.value ? ` "${c.value}"` : "";
+      const fit = this.componentFits(c.id) ? "" : "  [OFF-BOARD]";
+      lines.push(`  ${c.ref} (${c.footprint})${val} -> ${range}${rot}${fit}`);
+    }
+
+    lines.push("");
+    lines.push("CONNECTIONS");
+    const crossing = new Set(this.crossings().flatMap((p) => [p.a, p.b]));
+    const traces = this.getTraces();
+    if (traces.length === 0) lines.push("  (belum ada jalur)");
+    for (const t of traces) {
+      const a = label(t.path[0]);
+      const b = label(t.path[t.path.length - 1]);
+      const word = t.layer === "jumper" ? "jumper" : "bridge";
+      const via = t.path.length > 2 ? ` (${t.path.length} holes)` : "";
+      const warn = crossing.has(t.id) ? "  [! CROSSING]" : "";
+      lines.push(`  ${t.net ?? "(no net)"}: ${word} ${a}->${b}${via}${warn}`);
+    }
+
+    const c = this.counts();
+    lines.push("");
+    lines.push("SUMMARY");
+    lines.push(`  ${c.traces} trace (${c.jumpers} jumper), ${c.bottomCrossings} crossing, ${this.ratsnest().length} airwire tersisa`);
+    return lines.join("\n");
+  }
+
   // ---- serialisation ----
 
   /**
