@@ -217,6 +217,10 @@ export default function Home() {
   const freePoints = hoverHole ? [...drawPath, hoverHole] : drawPath;
   const freeStitched =
     routing && freePoints.length >= 2 ? engine.routeWaypoints(freePoints)?.path ?? null : null;
+  // Net being routed (from the first waypoint) + its destination pads, so the
+  // user can see where the current wire should connect — like KiCad's ratsnest.
+  const routeNet = routing && drawPath.length > 0 ? engine.netAt(drawPath[0]) ?? null : null;
+  const routeTargets = routeNet ? engine.padsOfNet(routeNet) : [];
   const unplaced = engine.getUnplacedComponents();
   const airwires = engine.ratsnest();
   const crossPairs = engine.crossings();
@@ -353,7 +357,9 @@ export default function Home() {
             </button>
             {routing && drawPath.length > 0 && (
               <>
-                <span style={{ fontSize: 13, color: palette.routeStart }}>{drawPath.length} holes</span>
+                <span style={{ fontSize: 13, color: palette.routeStart }}>
+                  {routeNet ? `net ${routeNet}` : "(no net)"} · {drawPath.length} holes
+                </span>
                 <button onClick={finishFreeDraw} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Finish (Enter)</button>
                 <button onClick={() => setDrawPath([])} style={btn}>Cancel (Esc)</button>
               </>
@@ -445,6 +451,8 @@ export default function Home() {
             onPlace={place}
             drawPath={freeStitched}
             drawWaypoints={drawPath}
+            routeNet={routeNet}
+            routeTargets={routeTargets}
             onRouteFinish={finishFreeDraw}
             onMoveStart={pushHistory}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}

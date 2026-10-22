@@ -52,6 +52,10 @@ interface Props {
   drawPath?: HoleCoord[] | null;
   /** Free-draw waypoints the user clicked (drawn as dots). */
   drawWaypoints?: HoleCoord[] | null;
+  /** Net currently being routed — its airwires are emphasised, others dimmed. */
+  routeNet?: string | null;
+  /** Destination pads of the net being routed (highlighted rings). */
+  routeTargets?: HoleCoord[] | null;
   /** An unplaced component being dropped: the next click places it. */
   placingComponentId?: string | null;
   onRoutePick?: (hole: HoleCoord) => void;
@@ -89,6 +93,8 @@ export default function PerfboardCanvas({
   previewPath = null,
   drawPath = null,
   drawWaypoints = null,
+  routeNet = null,
+  routeTargets = null,
   placingComponentId = null,
   onRoutePick,
   onRouteFinish,
@@ -220,16 +226,31 @@ export default function PerfboardCanvas({
       }
     }
 
-    // Ratsnest (airwires) — drawn under components.
+    // Ratsnest (airwires) — drawn under components. While routing a net, that
+    // net's airwires are highlighted and the rest dimmed, like KiCad's ratsnest.
     if (airwires.length) {
       ctx.save();
-      ctx.strokeStyle = palette.airwire;
-      ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       for (const w of airwires) {
+        const isRoute = routeNet != null && w.net === routeNet;
+        ctx.strokeStyle = isRoute ? palette.routeStart : routeNet != null ? "rgba(120,200,120,0.18)" : palette.airwire;
+        ctx.lineWidth = isRoute ? Math.max(1.5, step * 0.08) : 1;
         ctx.beginPath();
         ctx.moveTo(sx(w.a.col), sy(w.a.row));
         ctx.lineTo(sx(w.b.col), sy(w.b.row));
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Destination pads of the net being routed (glowing rings).
+    if (routeTargets && routeTargets.length) {
+      ctx.save();
+      ctx.strokeStyle = palette.routeStart;
+      ctx.lineWidth = Math.max(1.5, step * 0.09);
+      for (const h of routeTargets) {
+        ctx.beginPath();
+        ctx.arc(sx(h.col), sy(h.row), padR * 1.35, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.restore();
@@ -353,7 +374,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath, drawWaypoints]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath, drawWaypoints, routeNet, routeTargets]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {

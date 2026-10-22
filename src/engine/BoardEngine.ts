@@ -440,6 +440,14 @@ export class BoardEngine {
     return this.state.nets.find((n) => n.pins.some((x) => x.ref === pin.ref && x.pin === pin.pin))?.name;
   }
 
+  /** Board holes of every placed pad on the given net (the route's destinations). */
+  padsOfNet(net: string): HoleCoord[] {
+    const netOf = this.pinNetMap();
+    return this.allPins()
+      .filter((p) => netOf.get(`${p.ref}/${p.pin}`) === net)
+      .map((p) => ({ ...p.coord }));
+  }
+
   /** Add a trace from an explicit hole path. Returns its id. */
   addTrace(path: HoleCoord[], opts: { layer?: Layer; net?: string } = {}): string {
     if (path.length < 2) throw new Error("addTrace: path needs >= 2 holes");

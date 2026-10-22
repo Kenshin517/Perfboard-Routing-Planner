@@ -78,6 +78,14 @@ describe("manual routing", () => {
     }
   });
 
+  it("padsOfNet returns every placed pad on a net (route destinations)", () => {
+    const b = twoHeaderBoard(); // J1 pin1 @ (0,0), J2 pin1 @ (0,5), net NET1
+    const targets = b.padsOfNet("NET1");
+    expect(targets).toContainEqual({ col: 0, row: 0 });
+    expect(targets).toContainEqual({ col: 0, row: 5 });
+    expect(b.padsOfNet("NOPE")).toHaveLength(0);
+  });
+
   it("validates and edits traces", () => {
     const b = twoHeaderBoard();
     expect(() => b.addTrace([{ col: 0, row: 0 }])).toThrow(); // too short
