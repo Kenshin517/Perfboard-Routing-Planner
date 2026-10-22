@@ -4,6 +4,8 @@
  */
 
 import type { BoardEngine } from "@/engine/BoardEngine";
+import { mirrorCol, screenRectFromBounds } from "@/lib/display";
+import { palette } from "@/lib/theme";
 
 const CELL = 34;
 const MARGIN = 44;
@@ -16,22 +18,21 @@ export function exportPng(engine: BoardEngine, opts: { flipped?: boolean } = {})
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
 
-  const dispCol = (c: number) => (flip ? engine.cols - 1 - c : c);
-  const sx = (c: number) => MARGIN + dispCol(c) * CELL;
+  const sx = (c: number) => MARGIN + mirrorCol(c, engine.cols, flip) * CELL;
   const sy = (r: number) => MARGIN + r * CELL;
 
-  ctx.fillStyle = "#0f1216";
+  ctx.fillStyle = palette.bg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   // pads
   for (const h of engine.getHoles()) {
     ctx.beginPath();
     ctx.arc(sx(h.col), sy(h.row), CELL * 0.32, 0, Math.PI * 2);
-    ctx.fillStyle = "#c98a4d";
+    ctx.fillStyle = palette.pad;
     ctx.fill();
     ctx.beginPath();
     ctx.arc(sx(h.col), sy(h.row), CELL * 0.13, 0, Math.PI * 2);
-    ctx.fillStyle = "#0f1216";
+    ctx.fillStyle = palette.hole;
     ctx.fill();
   }
 
@@ -41,11 +42,11 @@ export function exportPng(engine: BoardEngine, opts: { flipped?: boolean } = {})
   for (const t of engine.getTraces()) {
     if (t.path.length < 2) continue;
     if (t.layer === "jumper") {
-      ctx.strokeStyle = "#e0b34a";
+      ctx.strokeStyle = palette.jumperTrace;
       ctx.lineWidth = CELL * 0.14;
       ctx.setLineDash([CELL * 0.35, CELL * 0.25]);
     } else {
-      ctx.strokeStyle = "#49c06a";
+      ctx.strokeStyle = palette.bottomTrace;
       ctx.lineWidth = CELL * 0.18;
       ctx.setLineDash([]);
     }
@@ -59,25 +60,23 @@ export function exportPng(engine: BoardEngine, opts: { flipped?: boolean } = {})
   // components
   for (const c of engine.getComponents()) {
     const pins = engine.pinPositions(c.id).map((p) => p.coord);
-    const minC = Math.min(...pins.map((p) => p.col)), maxC = Math.max(...pins.map((p) => p.col));
-    const minR = Math.min(...pins.map((p) => p.row)), maxR = Math.max(...pins.map((p) => p.row));
-    const x0 = sx(flip ? maxC : minC) - CELL * 0.45;
-    const y0 = sy(minR) - CELL * 0.45;
-    const w = (maxC - minC + 0.9) * CELL, h = (maxR - minR + 0.9) * CELL;
+    const bounds = engine.componentBounds(c.id);
+    const { minC, maxC, minR, maxR } = bounds;
+    const r = screenRectFromBounds(bounds, sx, sy, CELL * 0.45);
     ctx.fillStyle = "rgba(78,161,255,0.14)";
     ctx.strokeStyle = "rgba(78,161,255,0.6)";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.rect(x0, y0, w, h);
+    ctx.rect(r.x, r.y, r.w, r.h);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = "#4ea1ff";
+    ctx.fillStyle = palette.accent;
     for (const p of pins) {
       ctx.beginPath();
       ctx.arc(sx(p.col), sy(p.row), CELL * 0.2, 0, Math.PI * 2);
       ctx.fill();
     }
-    ctx.fillStyle = "#e6edf3";
+    ctx.fillStyle = palette.text;
     ctx.font = `${CELL * 0.38}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";

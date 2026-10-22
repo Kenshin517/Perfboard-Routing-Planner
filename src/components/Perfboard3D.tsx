@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { BoardEngine } from "@/engine/BoardEngine";
+import { palette, hexToInt } from "@/lib/theme";
 
 /**
  * Phase-2 3D view: simple box primitives per component on a board plane, for
@@ -29,7 +30,7 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     const height = mount.clientHeight || 600;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f1216);
+    scene.background = new THREE.Color(hexToInt(palette.bg));
 
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -100,7 +101,7 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     const boardThickness = 0.3;
     const board = new THREE.Mesh(
       new THREE.BoxGeometry(cfg.cols + 1, boardThickness, cfg.rows + 1),
-      new THREE.MeshStandardMaterial({ color: 0xb5702f, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: hexToInt(palette.board3d), roughness: 0.9 }),
     );
     board.position.set(cx, -boardThickness / 2, cz);
     content.add(board);
@@ -108,7 +109,7 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     // Pads (instanced).
     const padMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.18, 0.18, 0.05, 10),
-      new THREE.MeshStandardMaterial({ color: 0xc98a4d, metalness: 0.4, roughness: 0.5 }),
+      new THREE.MeshStandardMaterial({ color: hexToInt(palette.pad), metalness: 0.4, roughness: 0.5 }),
       cfg.cols * cfg.rows,
     );
     const m = new THREE.Matrix4();
@@ -121,7 +122,7 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     content.add(padMesh);
 
     // Component boxes.
-    const compMat = new THREE.MeshStandardMaterial({ color: 0x3a6bd6, roughness: 0.6 });
+    const compMat = new THREE.MeshStandardMaterial({ color: hexToInt(palette.comp3d), roughness: 0.6 });
     for (const comp of engine.getComponents()) {
       const bb = engine.componentBounds(comp.id);
       const hMm = engine.getFootprint(comp.footprint)?.body.height ?? 6;

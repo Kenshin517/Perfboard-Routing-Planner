@@ -82,6 +82,17 @@ export function makeGenericFootprint(name: string, pinCount: number): Footprint 
   return header(pinCount, name);
 }
 
+/** Reference-designator prefix for a footprint (U for ICs, R for resistors, …). */
+export function refPrefixFor(footprintName: string): string {
+  if (footprintName.startsWith("DIP") || footprintName.startsWith("ESP32")) return "U";
+  if (footprintName.startsWith("R_")) return "R";
+  if (footprintName.startsWith("C_")) return "C";
+  if (footprintName.startsWith("DIODE")) return "D";
+  if (footprintName.startsWith("PINHDR") || footprintName.startsWith("SCREW")) return "J";
+  if (footprintName.startsWith("TO-220")) return "Q";
+  return "X";
+}
+
 /** Rotate a grid offset about the origin by the given rotation (clockwise, screen coords y-down). */
 export function rotateOffset(offset: { col: number; row: number }, rot: Rotation): HoleCoord {
   switch (rot) {

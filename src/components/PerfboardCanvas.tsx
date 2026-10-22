@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import type { Airwire, HoleCoord } from "@/engine/types";
 import { colToLabel, rowToLabel } from "@/engine/coordinates";
+import { mirrorCol, screenRectFromBounds } from "@/lib/display";
+import { palette } from "@/lib/theme";
 
 const CELL_PX = 30;
 const MARGIN = 1.2;
@@ -112,28 +114,16 @@ export default function PerfboardCanvas({
   // Map screen px -> nearest hole (flip-aware).
   const holeAt = useCallback(
     (px: number, py: number): HoleCoord => {
-      const dispCol = Math.round((px - view.offsetX) / (CELL_PX * view.scale));
+      const rawCol = Math.round((px - view.offsetX) / (CELL_PX * view.scale));
       const row = Math.round((py - view.offsetY) / (CELL_PX * view.scale));
-      const col = flipped ? engine.cols - 1 - dispCol : dispCol;
-      return { col, row };
+      return { col: mirrorCol(rawCol, engine.cols, flipped), row };
     },
     [view, flipped, engine],
   );
 
   // Component bounding boxes (in holes) for hit-testing.
   const boxes = useCallback((): CompBox[] => {
-    return engine.getComponents().map((c) => {
-      const pins = engine.pinPositions(c.id).map((p) => p.coord);
-      const cs = pins.map((p) => p.col);
-      const rs = pins.map((p) => p.row);
-      return {
-        id: c.id,
-        minC: Math.min(...cs),
-        maxC: Math.max(...cs),
-        minR: Math.min(...rs),
-        maxR: Math.max(...rs),
-      };
-    });
+    return engine.getComponents().map((c) => ({ id: c.id, ...engine.componentBounds(c.id) }));
   }, [engine]);
 
   // Continuous world coords (flip-aware) for trace hit-testing.
@@ -141,7 +131,7 @@ export default function PerfboardCanvas({
     (px: number, py: number) => {
       const wc = (px - view.offsetX) / (CELL_PX * view.scale);
       const wr = (py - view.offsetY) / (CELL_PX * view.scale);
-      return { col: flipped ? engine.cols - 1 - wc : wc, row: wr };
+      return { col: mirrorCol(wc, engine.cols, flipped), row: wr };
     },
     [view, flipped, engine],
   );
@@ -188,8 +178,7 @@ export default function PerfboardCanvas({
     ctx.clearRect(0, 0, size.w, size.h);
 
     const { scale, offsetX, offsetY } = view;
-    const dispCol = (c: number) => (flipped ? engine.cols - 1 - c : c);
-    const sx = (c: number) => dispCol(c) * CELL_PX * scale + offsetX;
+    const sx = (c: number) => mirrorCol(c, engine.cols, flipped) * CELL_PX * scale + offsetX;
     const sy = (r: number) => r * CELL_PX * scale + offsetY;
     const step = CELL_PX * scale;
     const padR = Math.max(1.5, step * 0.34);
@@ -200,11 +189,11 @@ export default function PerfboardCanvas({
       for (let col = 0; col < engine.cols; col++) {
         ctx.beginPath();
         ctx.arc(sx(col), sy(row), padR, 0, Math.PI * 2);
-        ctx.fillStyle = "#c98a4d";
+        ctx.fillStyle = palette.pad;
         ctx.fill();
         ctx.beginPath();
         ctx.arc(sx(col), sy(row), holeR, 0, Math.PI * 2);
-        ctx.fillStyle = "#0f1216";
+        ctx.fillStyle = palette.hole;
         ctx.fill();
       }
     }
@@ -212,7 +201,7 @@ export default function PerfboardCanvas({
     // Ratsnest (airwires) — drawn under components.
     if (airwires.length) {
       ctx.save();
-      ctx.strokeStyle = "rgba(120,200,120,0.55)";
+      ctx.strokeStyle = palette.airwire;
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       for (const w of airwires) {
@@ -233,14 +222,14 @@ export default function PerfboardCanvas({
       ctx.lineJoin = "round";
       const crossing = crossSet.has(t.id);
       if (crossing) {
-        ctx.strokeStyle = "#ff5a5a";
+        ctx.strokeStyle = palette.danger;
         ctx.lineWidth = Math.max(2, step * 0.2);
       } else if (t.layer === "jumper") {
-        ctx.strokeStyle = "#e0b34a";
+        ctx.strokeStyle = palette.jumperTrace;
         ctx.lineWidth = Math.max(1.5, step * 0.14);
         ctx.setLineDash([step * 0.35, step * 0.25]);
       } else {
-        ctx.strokeStyle = "#49c06a";
+        ctx.strokeStyle = palette.bottomTrace;
         ctx.lineWidth = Math.max(2, step * 0.18);
       }
       if (t.id === selectedTraceId) {
@@ -265,7 +254,7 @@ export default function PerfboardCanvas({
     if (routing && routeStart) {
       ctx.beginPath();
       ctx.arc(sx(routeStart.col), sy(routeStart.row), Math.max(3, step * 0.4), 0, Math.PI * 2);
-      ctx.strokeStyle = "#ffd166";
+      ctx.strokeStyle = palette.routeStart;
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -273,20 +262,18 @@ export default function PerfboardCanvas({
     // Components.
     for (const c of engine.getComponents()) {
       const pins = engine.pinPositions(c.id);
-      const cs = pins.map((p) => p.coord.col);
-      const rs = pins.map((p) => p.coord.row);
-      const minC = Math.min(...cs), maxC = Math.max(...cs), minR = Math.min(...rs), maxR = Math.max(...rs);
+      const bounds = engine.componentBounds(c.id);
+      const { minC, maxC, minR, maxR } = bounds;
       const fits = engine.componentFits(c.id);
       const selected = c.id === selectedId;
 
-      // body
-      const x0 = sx(minC - 0.45), y0 = sy(minR - 0.45);
-      const w = (maxC - minC + 0.9) * step, h = (maxR - minR + 0.9) * step;
+      // body (flip-safe rect from both corners)
+      const r = screenRectFromBounds(bounds, sx, sy, step * 0.45);
       ctx.fillStyle = fits ? "rgba(78,161,255,0.14)" : "rgba(255,90,90,0.18)";
-      ctx.strokeStyle = selected ? "#4ea1ff" : fits ? "rgba(78,161,255,0.5)" : "rgba(255,90,90,0.7)";
+      ctx.strokeStyle = selected ? palette.accent : fits ? "rgba(78,161,255,0.5)" : "rgba(255,90,90,0.7)";
       ctx.lineWidth = selected ? 2 : 1;
       ctx.beginPath();
-      ctx.rect(x0, y0, w, h);
+      ctx.rect(r.x, r.y, r.w, r.h);
       ctx.fill();
       ctx.stroke();
 
@@ -294,13 +281,13 @@ export default function PerfboardCanvas({
       for (const p of pins) {
         ctx.beginPath();
         ctx.arc(sx(p.coord.col), sy(p.coord.row), Math.max(1.5, step * 0.22), 0, Math.PI * 2);
-        ctx.fillStyle = fits ? "#4ea1ff" : "#ff5a5a";
+        ctx.fillStyle = fits ? palette.accent : palette.danger;
         ctx.fill();
       }
 
       // ref label
       if (step >= 12) {
-        ctx.fillStyle = "#e6edf3";
+        ctx.fillStyle = palette.text;
         ctx.font = `${Math.min(14, step * 0.4)}px ui-sans-serif, system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -310,7 +297,7 @@ export default function PerfboardCanvas({
 
     // Axis labels.
     if (step >= 14) {
-      ctx.fillStyle = "#8b98a5";
+      ctx.fillStyle = palette.muted;
       ctx.font = `${Math.min(16, step * 0.42)}px ui-sans-serif, system-ui, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";

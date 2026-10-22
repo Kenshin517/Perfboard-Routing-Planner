@@ -8,6 +8,7 @@ import type { jsPDF } from "jspdf";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import { holeMm, pageSizeMm, type PrintLayout } from "@/engine/printGeometry";
 import { coordToLabel } from "@/engine/coordinates";
+import { printPalette } from "@/lib/theme";
 
 const MARGIN = 12;
 const CAL_MM = 50;
@@ -33,7 +34,7 @@ function drawPage(doc: jsPDF, engine: BoardEngine, mirror: boolean) {
   doc.text(mirror ? "ROUTING GUIDE — bottom (solder side, mirrored)" : "PLACEMENT GUIDE — top (component side)", MARGIN, 8);
 
   // Pads.
-  doc.setDrawColor(150);
+  doc.setDrawColor(...printPalette.pad);
   doc.setLineWidth(0.15);
   for (const h of engine.getHoles()) {
     const p = holeMm(h, layout);
@@ -47,12 +48,12 @@ function drawPage(doc: jsPDF, engine: BoardEngine, mirror: boolean) {
       const xs = pins.map((p) => p.x), ys = pins.map((p) => p.y);
       const x0 = Math.min(...xs) - 1.2, y0 = Math.min(...ys) - 1.2;
       const w = Math.max(...xs) - Math.min(...xs) + 2.4, h = Math.max(...ys) - Math.min(...ys) + 2.4;
-      doc.setDrawColor(40, 90, 170);
+      doc.setDrawColor(...printPalette.component);
       doc.setLineWidth(0.3);
       doc.rect(x0, y0, w, h, "S");
-      doc.setFillColor(40, 90, 170);
+      doc.setFillColor(...printPalette.component);
       for (const p of pins) doc.circle(p.x, p.y, 0.9, "F");
-      doc.setTextColor(40, 90, 170);
+      doc.setTextColor(...printPalette.component);
       doc.setFontSize(7);
       doc.text(c.ref, (Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2, { align: "center", baseline: "middle" });
     }
@@ -62,18 +63,18 @@ function drawPage(doc: jsPDF, engine: BoardEngine, mirror: boolean) {
       if (t.path.length < 2) continue;
       const pts = t.path.map((h) => holeMm(h, layout));
       if (t.layer === "jumper") {
-        doc.setDrawColor(190, 120, 0);
+        doc.setDrawColor(...printPalette.jumperTrace);
         doc.setLineWidth(0.4);
         doc.setLineDashPattern([1.2, 0.8], 0);
       } else {
-        doc.setDrawColor(0, 120, 40);
+        doc.setDrawColor(...printPalette.bottomTrace);
         doc.setLineWidth(0.6);
         doc.setLineDashPattern([], 0);
       }
       for (let i = 1; i < pts.length; i++) doc.line(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
     }
     doc.setLineDashPattern([], 0);
-    doc.setFillColor(0, 0, 0);
+    doc.setFillColor(...printPalette.black);
     for (const p of engine.allPins()) {
       const m = holeMm(p.coord, layout);
       doc.circle(m.x, m.y, 0.9, "F");

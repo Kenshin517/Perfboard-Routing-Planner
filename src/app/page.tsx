@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { createBoard, BoardEngine } from "@/engine/BoardEngine";
+import { refPrefixFor } from "@/engine/footprints";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
 import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
@@ -11,17 +12,6 @@ import { exportPdf } from "@/export/pdf";
 import { exportPng } from "@/export/png";
 
 const Perfboard3D = dynamic(() => import("@/components/Perfboard3D"), { ssr: false });
-
-function prefixFor(fp: string): string {
-  if (fp.startsWith("DIP")) return "U";
-  if (fp.startsWith("R_")) return "R";
-  if (fp.startsWith("C_")) return "C";
-  if (fp.startsWith("DIODE")) return "D";
-  if (fp.startsWith("PINHDR") || fp.startsWith("SCREW")) return "J";
-  if (fp.startsWith("TO-220")) return "Q";
-  if (fp.startsWith("ESP32")) return "U";
-  return "X";
-}
 
 function nextRef(engine: BoardEngine, prefix: string): string {
   let max = 0;
@@ -180,7 +170,7 @@ export default function Home() {
   }, [selected, selectedTrace, engine]);
 
   const place = (fp: string, hole: HoleCoord) => {
-    engine.addComponent({ footprint: fp, ref: nextRef(engine, prefixFor(fp)), anchor: hole });
+    engine.addComponent({ footprint: fp, ref: nextRef(engine, refPrefixFor(fp)), anchor: hole });
     bump();
   };
 
