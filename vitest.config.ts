@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 
 export default defineConfig({
   resolve: {
+    // Keep this "@" alias pointing at the same place as tsconfig's "@/*" paths.
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },

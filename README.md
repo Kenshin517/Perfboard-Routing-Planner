@@ -25,9 +25,12 @@ Yang bisa dilihat sekarang: grid lubang perfboard dengan label koordinat (A, B, 
 | ------------------- | --------------------------------------------- |
 | `npm run dev`       | Dev server (hot reload)                       |
 | `npm run build`     | Production build                              |
+| `npm run lint`      | ESLint (next/core-web-vitals)                 |
 | `npm run typecheck` | `tsc --noEmit`                                |
-| `npm test`          | Jalanin test (Vitest)                         |
+| `npm test`          | Jalanin test engine (Vitest)                  |
 | `npm run test:watch`| Test watch mode                               |
+| `npm run test:e2e`  | Playwright smoke (`npx playwright install` dulu) |
+| `npm run check`     | lint + typecheck + test (dipaksa pre-commit)  |
 
 ## Arsitektur (penting buat tiket berikutnya)
 
