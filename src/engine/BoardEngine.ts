@@ -267,6 +267,13 @@ export class BoardEngine {
     return this.pinPositions(id).every((p) => this.hasHole(p.coord.col, p.coord.row));
   }
 
+  /** Grid bounding box (inclusive) of a component's pins. Shared by every renderer. */
+  componentBounds(id: string): { minC: number; maxC: number; minR: number; maxR: number } {
+    const pins = this.pinPositions(id).map((p) => p.coord);
+    const cs = pins.map((p) => p.col), rs = pins.map((p) => p.row);
+    return { minC: Math.min(...cs), maxC: Math.max(...cs), minR: Math.min(...rs), maxR: Math.max(...rs) };
+  }
+
   /** Every pin of every component, resolved to absolute positions. */
   allPins(): ResolvedPin[] {
     return this.state.components.flatMap((c) => this.pinPositions(c.id));
@@ -351,13 +358,24 @@ export class BoardEngine {
       byCoord.set(k, arr);
     });
 
+    // Net each pin belongs to (undefined if on no net).
+    const netOf = pins.map(
+      (p) => this.state.nets.find((n) => n.pins.some((x) => x.ref === p.ref && x.pin === p.pin))?.name,
+    );
+    const sameNet = (i: number, j: number) => netOf[i] === netOf[j];
+
     const uf = new UnionFind(pins.length);
-    // pins sharing a hole are the same node
-    for (const arr of byCoord.values()) for (let i = 1; i < arr.length; i++) uf.union(arr[0], arr[i]);
-    // pins joined by an existing trace
+    // Pins sharing a hole are connected only if they're on the same net; two
+    // different nets on one pad is a short (flagged elsewhere), not connectivity.
+    for (const arr of byCoord.values())
+      for (let i = 1; i < arr.length; i++) if (sameNet(arr[0], arr[i])) uf.union(arr[0], arr[i]);
+    // Pins joined by an existing trace: only pins of that trace's own net (a bare
+    // trace crossing a foreign pad is a short, not an intended connection).
     for (const t of this.state.traces) {
       const onPath = new Set(t.path.map(key));
-      const hit = pins.map((p, i) => (onPath.has(key(p.coord)) ? i : -1)).filter((i) => i >= 0);
+      const hit = pins
+        .map((p, i) => (onPath.has(key(p.coord)) ? i : -1))
+        .filter((i) => i >= 0 && (t.net === undefined || netOf[i] === t.net));
       for (let i = 1; i < hit.length; i++) uf.union(hit[0], hit[i]);
     }
 

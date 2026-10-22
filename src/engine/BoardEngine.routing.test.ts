@@ -40,6 +40,27 @@ describe("manual routing", () => {
     expect(b.getTraces()).toHaveLength(0);
   });
 
+  it("does not treat a foreign-net trace crossing a pad as connectivity (ratsnest)", () => {
+    const b = createBoard({ cols: 20, rows: 20 });
+    b.registerFootprint({ name: "PIN1", pins: [{ num: "1", col: 0, row: 0 }], body: { w: 1, h: 1 } });
+    // Net A pads at (4,5) and (8,5); net B pads at (5,5) and (7,5) — between A's.
+    b.addComponent({ footprint: "PIN1", ref: "A1", anchor: { col: 4, row: 5 } });
+    b.addComponent({ footprint: "PIN1", ref: "A2", anchor: { col: 8, row: 5 } });
+    b.addComponent({ footprint: "PIN1", ref: "B1", anchor: { col: 5, row: 5 } });
+    b.addComponent({ footprint: "PIN1", ref: "B2", anchor: { col: 7, row: 5 } });
+    b.setNets([
+      { name: "A", pins: [{ ref: "A1", pin: "1" }, { ref: "A2", pin: "1" }] },
+      { name: "B", pins: [{ ref: "B1", pin: "1" }, { ref: "B2", pin: "1" }] },
+    ]);
+    // Route net A straight across — its path happens to pass over B1 and B2.
+    b.addTrace([{ col: 4, row: 5 }, { col: 5, row: 5 }, { col: 6, row: 5 }, { col: 7, row: 5 }, { col: 8, row: 5 }], { net: "A" });
+
+    const rats = b.ratsnest();
+    // A is connected; B must STILL show its airwire (the A trace is not net B).
+    expect(rats.filter((w) => w.net === "A")).toHaveLength(0);
+    expect(rats.filter((w) => w.net === "B")).toHaveLength(1);
+  });
+
   it("survives serialization with traces", () => {
     const b = twoHeaderBoard();
     b.routePadToPad({ col: 0, row: 0 }, { col: 0, row: 5 });

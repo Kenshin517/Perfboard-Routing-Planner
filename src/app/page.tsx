@@ -221,7 +221,7 @@ export default function Home() {
                 {counts.bottomCrossings} crossing{counts.bottomCrossings === 1 ? "" : "s"}
               </span>
             </span>
-            <button onClick={() => { const r = engine.autoroute(); setSelectedTrace(null); bump(); if (airwires.length === 0 && r.bottom + r.jumper === 0) return; }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
+            <button onClick={() => { engine.autoroute(); setSelectedTrace(null); bump(); }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
               Autoroute
             </button>
             {counts.traces > 0 && (
