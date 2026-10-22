@@ -10,8 +10,10 @@ import type {
   BoardState,
   Footprint,
   HoleCoord,
+  Net,
   PlacedComponent,
   Rotation,
+  Trace,
 } from "./types";
 import { coordToLabel } from "./coordinates";
 import { DEFAULT_FOOTPRINTS, rotateOffset } from "./footprints";
@@ -236,4 +238,57 @@ export class BoardEngine {
   allPins(): ResolvedPin[] {
     return this.state.components.flatMap((c) => this.pinPositions(c.id));
   }
+
+  // ---- nets & traces (used by later tickets; included here for serialisation) ----
+
+  getNets(): Net[] {
+    return this.state.nets.map((n) => ({ ...n, pins: n.pins.map((p) => ({ ...p })) }));
+  }
+
+  setNets(nets: Net[]): void {
+    this.state.nets = nets.map((n) => ({ ...n, pins: n.pins.map((p) => ({ ...p })) }));
+  }
+
+  getTraces(): Trace[] {
+    return this.state.traces.map((t) => ({ ...t, path: t.path.map((h) => ({ ...h })) }));
+  }
+
+  // ---- serialisation ----
+
+  /**
+   * Full, self-contained project snapshot. Footprints actually referenced by
+   * components are embedded so a custom part survives export/import.
+   */
+  serialize(): SerializedProject {
+    const used = new Set(this.state.components.map((c) => c.footprint));
+    const footprints: Footprint[] = [];
+    for (const name of used) {
+      const fp = this.footprints.get(name);
+      if (fp) footprints.push(fp);
+    }
+    return {
+      version: 1,
+      state: {
+        config: { ...this.state.config },
+        components: this.state.components.map((c) => ({ ...c, anchor: { ...c.anchor } })),
+        traces: this.getTraces(),
+        nets: this.getNets(),
+      },
+      footprints,
+    };
+  }
+
+  /** Rebuild an engine from a {@link serialize} snapshot (defaults + embedded footprints). */
+  static fromSerialized(data: SerializedProject): BoardEngine {
+    if (!data || data.version !== 1 || !data.state || !data.state.config) {
+      throw new Error("fromSerialized: not a valid project (expected version 1)");
+    }
+    return new BoardEngine(data.state, DEFAULT_FOOTPRINTS.concat(data.footprints ?? []));
+  }
+}
+
+export interface SerializedProject {
+  version: 1;
+  state: BoardState;
+  footprints: Footprint[];
 }

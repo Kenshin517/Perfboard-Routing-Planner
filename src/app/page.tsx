@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createBoard, BoardEngine } from "@/engine/BoardEngine";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
+import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
 
 function prefixFor(fp: string): string {
   if (fp.startsWith("DIP")) return "U";
@@ -38,6 +39,58 @@ export default function Home() {
   const [resetToken, setResetToken] = useState(0);
   const [armed, setArmed] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const swapEngine = (next: BoardEngine) => {
+    engineRef.current = next;
+    setCols(next.cols);
+    setRows(next.rows);
+    setSelected(null);
+    setArmed(null);
+    bump();
+  };
+
+  // Load autosaved project on mount.
+  useEffect(() => {
+    let cancelled = false;
+    loadProject().then((data) => {
+      if (cancelled) return;
+      if (data) {
+        try {
+          swapEngine(BoardEngine.fromSerialized(data));
+        } catch {
+          /* ignore corrupt autosave */
+        }
+      }
+      setLoaded(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Autosave (debounced) after any change, once initial load is done.
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => {
+      void saveProject(engine.serialize());
+    }, 400);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rev, loaded]);
+
+  const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      swapEngine(BoardEngine.fromSerialized(await readProjectFile(file)));
+    } catch {
+      alert("File project tidak valid.");
+    }
+  };
 
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
   const applySize = (c: number, r: number) => {
@@ -123,6 +176,10 @@ export default function Home() {
                 style={input} />
             </label>
             <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
+            <span style={{ width: 1, height: 20, background: "var(--border)" }} />
+            <button onClick={() => downloadProject(engine.serialize())} style={btn}>Export</button>
+            <button onClick={() => fileRef.current?.click()} style={btn}>Import</button>
+            <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImportFile} style={{ display: "none" }} />
           </div>
         </header>
 
