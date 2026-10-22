@@ -1,87 +1,187 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { createBoard } from "@/engine/BoardEngine";
+import { useEffect, useRef, useState } from "react";
+import { createBoard, BoardEngine } from "@/engine/BoardEngine";
+import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
 
+function prefixFor(fp: string): string {
+  if (fp.startsWith("DIP")) return "U";
+  if (fp.startsWith("R_")) return "R";
+  if (fp.startsWith("C_")) return "C";
+  if (fp.startsWith("DIODE")) return "D";
+  if (fp.startsWith("PINHDR") || fp.startsWith("SCREW")) return "J";
+  if (fp.startsWith("TO-220")) return "Q";
+  if (fp.startsWith("ESP32")) return "U";
+  return "X";
+}
+
+function nextRef(engine: BoardEngine, prefix: string): string {
+  let max = 0;
+  for (const c of engine.getComponents()) {
+    const m = new RegExp(`^${prefix}(\\d+)$`).exec(c.ref);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `${prefix}${max + 1}`;
+}
+
 export default function Home() {
-  const [cols, setCols] = useState(20);
-  const [rows, setRows] = useState(20);
+  const engineRef = useRef<BoardEngine>();
+  if (!engineRef.current) engineRef.current = createBoard({ cols: 24, rows: 20 });
+  const engine = engineRef.current;
+
+  const [rev, setRev] = useState(0);
+  const bump = () => setRev((r) => r + 1);
+
+  const [cols, setCols] = useState(engine.cols);
+  const [rows, setRows] = useState(engine.rows);
   const [resetToken, setResetToken] = useState(0);
+  const [armed, setArmed] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
 
-  // Rebuild the engine whenever the board size changes.
-  const engine = useMemo(() => createBoard({ cols, rows }), [cols, rows]);
+  const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
+  const applySize = (c: number, r: number) => {
+    engine.resize(c, r);
+    bump();
+  };
 
-  const clamp = (n: number) => Math.max(1, Math.min(100, Math.round(n || 1)));
+  // Keyboard: R rotate, Delete remove, Esc disarm/deselect.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setArmed(null);
+        setSelected(null);
+      } else if ((e.key === "r" || e.key === "R") && selected) {
+        engine.rotateBy90(selected);
+        bump();
+      } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+        engine.removeComponent(selected);
+        setSelected(null);
+        bump();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected, engine]);
+
+  const place = (fp: string, hole: HoleCoord) => {
+    engine.addComponent({ footprint: fp, ref: nextRef(engine, prefixFor(fp)), anchor: hole });
+    bump();
+  };
+
+  const selComp = selected ? engine.getComponent(selected) : undefined;
 
   return (
-    <main style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 16,
-          padding: "10px 16px",
-          background: "var(--panel)",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <strong style={{ fontSize: 15 }}>Perfboard Routing Planner</strong>
-        <span style={{ color: "var(--muted)", fontSize: 13 }}>
-          {cols} × {rows} holes &middot; {engine.holeCount()} total &middot; 2.54mm
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-          <label style={{ fontSize: 13, color: "var(--muted)" }}>
-            Cols{" "}
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={cols}
-              onChange={(e) => setCols(clamp(Number(e.target.value)))}
-              style={inputStyle}
-            />
-          </label>
-          <label style={{ fontSize: 13, color: "var(--muted)" }}>
-            Rows{" "}
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={rows}
-              onChange={(e) => setRows(clamp(Number(e.target.value)))}
-              style={inputStyle}
-            />
-          </label>
-          <button onClick={() => setResetToken((t) => t + 1)} style={btnStyle}>
-            Reset view
+    <main style={{ display: "flex", height: "100%" }}>
+      {/* Palette */}
+      <aside style={paletteStyle}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Components</div>
+        {engine.listFootprints().map((fp) => (
+          <button
+            key={fp.name}
+            onClick={() => setArmed((a) => (a === fp.name ? null : fp.name))}
+            style={{ ...paletteBtn, ...(armed === fp.name ? paletteBtnActive : {}) }}
+          >
+            {fp.name}
           </button>
+        ))}
+        {armed && (
+          <div style={{ fontSize: 12, color: "var(--accent)", marginTop: 8 }}>
+            Klik board untuk taruh {armed}. Esc = stop.
+          </div>
+        )}
+      </aside>
+
+      {/* Canvas + chrome */}
+      <section style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+        <header style={headerStyle}>
+          <strong style={{ fontSize: 15 }}>Perfboard Routing Planner</strong>
+          <span style={{ color: "var(--muted)", fontSize: 13 }}>
+            {engine.cols} × {engine.rows} &middot; {engine.getComponents().length} parts
+          </span>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            {selComp && (
+              <>
+                <span style={{ fontSize: 13, color: "var(--accent)" }}>
+                  {selComp.ref} ({selComp.footprint}) {selComp.rotation}&deg;
+                </span>
+                <button onClick={() => { engine.rotateBy90(selComp.id); bump(); }} style={btn}>Rotate (R)</button>
+                <button onClick={() => { engine.removeComponent(selComp.id); setSelected(null); bump(); }} style={btn}>Delete</button>
+                <span style={{ width: 1, height: 20, background: "var(--border)" }} />
+              </>
+            )}
+            <label style={lbl}>
+              Cols{" "}
+              <input type="number" min={1} max={120} value={cols}
+                onChange={(e) => { const v = clamp(Number(e.target.value)); setCols(v); applySize(v, rows); }}
+                style={input} />
+            </label>
+            <label style={lbl}>
+              Rows{" "}
+              <input type="number" min={1} max={120} value={rows}
+                onChange={(e) => { const v = clamp(Number(e.target.value)); setRows(v); applySize(cols, v); }}
+                style={input} />
+            </label>
+            <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
+          </div>
+        </header>
+
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <PerfboardCanvas
+            engine={engine}
+            rev={rev}
+            resetToken={resetToken}
+            armedFootprint={armed}
+            selectedId={selected}
+            onSelect={setSelected}
+            onPlace={place}
+            onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}
+          />
         </div>
-      </header>
 
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <PerfboardCanvas engine={engine} resetToken={resetToken} />
-      </div>
-
-      <footer style={{ padding: "6px 16px", fontSize: 12, color: "var(--muted)", background: "var(--panel)", borderTop: "1px solid var(--border)" }}>
-        Scroll to zoom &middot; drag to pan &middot; ticket 01: board skeleton
-      </footer>
+        <footer style={footerStyle}>
+          Pilih part di kiri &rarr; klik board untuk taruh &middot; klik part untuk pilih/geser &middot; R = rotate, Del = hapus &middot; scroll = zoom, drag = pan
+        </footer>
+      </section>
     </main>
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  width: 56,
-  padding: "4px 6px",
-  background: "var(--bg)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
+const paletteStyle: React.CSSProperties = {
+  width: 190,
+  padding: 12,
+  background: "var(--panel)",
+  borderRight: "1px solid var(--border)",
+  overflowY: "auto",
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
 };
-
-const btnStyle: React.CSSProperties = {
-  padding: "5px 10px",
+const paletteBtn: React.CSSProperties = {
+  textAlign: "left",
+  padding: "7px 9px",
   background: "var(--bg)",
   border: "1px solid var(--border)",
   borderRadius: 6,
   cursor: "pointer",
+  fontSize: 13,
 };
+const paletteBtnActive: React.CSSProperties = { borderColor: "var(--accent)", color: "var(--accent)" };
+const headerStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 16,
+  padding: "10px 16px",
+  background: "var(--panel)",
+  borderBottom: "1px solid var(--border)",
+};
+const footerStyle: React.CSSProperties = {
+  padding: "6px 16px",
+  fontSize: 12,
+  color: "var(--muted)",
+  background: "var(--panel)",
+  borderTop: "1px solid var(--border)",
+};
+const lbl: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
+const input: React.CSSProperties = { width: 56, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 };
+const btn: React.CSSProperties = { padding: "5px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" };

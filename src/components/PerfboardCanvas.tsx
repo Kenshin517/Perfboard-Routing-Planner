@@ -2,11 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
+import type { HoleCoord } from "@/engine/types";
 import { colToLabel, rowToLabel } from "@/engine/coordinates";
 
-/** Base pixels per hole at zoom = 1. Pan/zoom scale this. */
 const CELL_PX = 30;
-/** World-unit margin reserved around the grid for axis labels. */
 const MARGIN = 1.2;
 
 interface ViewState {
@@ -17,46 +16,110 @@ interface ViewState {
 
 interface Props {
   engine: BoardEngine;
-  /** Changing this number re-fits the board to the viewport (e.g. "Reset view"). */
+  /** Bump to force a redraw after the engine mutates. */
+  rev: number;
+  /** Changing this re-fits the board to the viewport. */
   resetToken?: number;
+  /** If set, the next click places this footprint (anchor at the clicked hole). */
+  armedFootprint?: string | null;
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
+  onPlace?: (footprint: string, hole: HoleCoord) => void;
+  onMove?: (id: string, anchor: HoleCoord) => void;
 }
 
-export default function PerfboardCanvas({ engine, resetToken = 0 }: Props) {
+interface CompBox {
+  id: string;
+  minC: number;
+  maxC: number;
+  minR: number;
+  maxR: number;
+}
+
+export default function PerfboardCanvas({
+  engine,
+  rev,
+  resetToken = 0,
+  armedFootprint = null,
+  selectedId = null,
+  onSelect,
+  onPlace,
+  onMove,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [view, setView] = useState<ViewState>({ scale: 1, offsetX: 0, offsetY: 0 });
-  const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const pan = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const compDrag = useRef<{ id: string; dc: number; dr: number } | null>(null);
 
-  // Track container size (DPR-aware canvas).
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      setSize({ w: el.clientWidth, h: el.clientHeight });
-    });
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
     ro.observe(el);
     setSize({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
 
-  // Fit the whole board into the viewport, centred.
   const fit = useCallback(() => {
     const { w, h } = size;
     if (w === 0 || h === 0) return;
     const worldW = (engine.cols - 1 + MARGIN * 2) * CELL_PX;
     const worldH = (engine.rows - 1 + MARGIN * 2) * CELL_PX;
     const scale = Math.min(w / worldW, h / worldH) * 0.98;
-    const offsetX = (w - (engine.cols - 1) * CELL_PX * scale) / 2;
-    const offsetY = (h - (engine.rows - 1) * CELL_PX * scale) / 2;
-    setView({ scale, offsetX, offsetY });
+    setView({
+      scale,
+      offsetX: (w - (engine.cols - 1) * CELL_PX * scale) / 2,
+      offsetY: (h - (engine.rows - 1) * CELL_PX * scale) / 2,
+    });
   }, [engine, size]);
 
-  // Re-fit on size change, engine change, or reset request.
   useEffect(() => {
     fit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, size.w, size.h, resetToken]);
+  }, [size.w, size.h, resetToken]);
+
+  // Map screen px -> nearest hole.
+  const holeAt = useCallback(
+    (px: number, py: number): HoleCoord => {
+      const col = Math.round((px - view.offsetX) / (CELL_PX * view.scale));
+      const row = Math.round((py - view.offsetY) / (CELL_PX * view.scale));
+      return { col, row };
+    },
+    [view],
+  );
+
+  // Component bounding boxes (in holes) for hit-testing.
+  const boxes = useCallback((): CompBox[] => {
+    return engine.getComponents().map((c) => {
+      const pins = engine.pinPositions(c.id).map((p) => p.coord);
+      const cs = pins.map((p) => p.col);
+      const rs = pins.map((p) => p.row);
+      return {
+        id: c.id,
+        minC: Math.min(...cs),
+        maxC: Math.max(...cs),
+        minR: Math.min(...rs),
+        maxR: Math.max(...rs),
+      };
+    });
+  }, [engine]);
+
+  const hitTest = useCallback(
+    (hole: HoleCoord): CompBox | null => {
+      const bs = boxes();
+      // topmost (last added) first
+      for (let i = bs.length - 1; i >= 0; i--) {
+        const b = bs[i];
+        if (hole.col >= b.minC - 0.5 && hole.col <= b.maxC + 0.5 && hole.row >= b.minR - 0.5 && hole.row <= b.maxR + 0.5) {
+          return b;
+        }
+      }
+      return null;
+    },
+    [boxes],
+  );
 
   // Draw.
   useEffect(() => {
@@ -71,82 +134,130 @@ export default function PerfboardCanvas({ engine, resetToken = 0 }: Props) {
     ctx.clearRect(0, 0, size.w, size.h);
 
     const { scale, offsetX, offsetY } = view;
-    const sx = (col: number) => col * CELL_PX * scale + offsetX;
-    const sy = (row: number) => row * CELL_PX * scale + offsetY;
+    const sx = (c: number) => c * CELL_PX * scale + offsetX;
+    const sy = (r: number) => r * CELL_PX * scale + offsetY;
     const step = CELL_PX * scale;
-
     const padR = Math.max(1.5, step * 0.34);
     const holeR = Math.max(0.6, step * 0.15);
 
-    // Holes (copper pad + drilled hole).
+    // Holes.
     for (let row = 0; row < engine.rows; row++) {
       for (let col = 0; col < engine.cols; col++) {
-        const x = sx(col);
-        const y = sy(row);
         ctx.beginPath();
-        ctx.arc(x, y, padR, 0, Math.PI * 2);
+        ctx.arc(sx(col), sy(row), padR, 0, Math.PI * 2);
         ctx.fillStyle = "#c98a4d";
         ctx.fill();
         ctx.beginPath();
-        ctx.arc(x, y, holeR, 0, Math.PI * 2);
+        ctx.arc(sx(col), sy(row), holeR, 0, Math.PI * 2);
         ctx.fillStyle = "#0f1216";
         ctx.fill();
       }
     }
 
-    // Axis labels (only when there's room to read them).
+    // Components.
+    for (const c of engine.getComponents()) {
+      const pins = engine.pinPositions(c.id);
+      const cs = pins.map((p) => p.coord.col);
+      const rs = pins.map((p) => p.coord.row);
+      const minC = Math.min(...cs), maxC = Math.max(...cs), minR = Math.min(...rs), maxR = Math.max(...rs);
+      const fits = engine.componentFits(c.id);
+      const selected = c.id === selectedId;
+
+      // body
+      const x0 = sx(minC - 0.45), y0 = sy(minR - 0.45);
+      const w = (maxC - minC + 0.9) * step, h = (maxR - minR + 0.9) * step;
+      ctx.fillStyle = fits ? "rgba(78,161,255,0.14)" : "rgba(255,90,90,0.18)";
+      ctx.strokeStyle = selected ? "#4ea1ff" : fits ? "rgba(78,161,255,0.5)" : "rgba(255,90,90,0.7)";
+      ctx.lineWidth = selected ? 2 : 1;
+      ctx.beginPath();
+      ctx.rect(x0, y0, w, h);
+      ctx.fill();
+      ctx.stroke();
+
+      // pins
+      for (const p of pins) {
+        ctx.beginPath();
+        ctx.arc(sx(p.coord.col), sy(p.coord.row), Math.max(1.5, step * 0.22), 0, Math.PI * 2);
+        ctx.fillStyle = fits ? "#4ea1ff" : "#ff5a5a";
+        ctx.fill();
+      }
+
+      // ref label
+      if (step >= 12) {
+        ctx.fillStyle = "#e6edf3";
+        ctx.font = `${Math.min(14, step * 0.4)}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(c.ref, sx((minC + maxC) / 2), sy((minR + maxR) / 2));
+      }
+    }
+
+    // Axis labels.
     if (step >= 14) {
       ctx.fillStyle = "#8b98a5";
       ctx.font = `${Math.min(16, step * 0.42)}px ui-sans-serif, system-ui, sans-serif`;
-      ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (let col = 0; col < engine.cols; col++) {
-        ctx.fillText(colToLabel(col), sx(col), sy(0) - step * 0.85);
-      }
+      ctx.textAlign = "center";
+      for (let col = 0; col < engine.cols; col++) ctx.fillText(colToLabel(col), sx(col), sy(0) - step * 0.85);
       ctx.textAlign = "right";
-      for (let row = 0; row < engine.rows; row++) {
-        ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
-      }
+      for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size]);
+  }, [engine, view, size, rev, selectedId]);
 
-  // Pan.
+  // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
-    drag.current = { x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY };
-  };
-  const onMouseMove = (e: React.MouseEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    setView((v) => ({ ...v, offsetX: d.ox + (e.clientX - d.x), offsetY: d.oy + (e.clientY - d.y) }));
-  };
-  const endDrag = () => {
-    drag.current = null;
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const hole = holeAt(px, py);
+
+    if (armedFootprint) {
+      onPlace?.(armedFootprint, hole);
+      return;
+    }
+    const hit = hitTest(hole);
+    if (hit) {
+      onSelect?.(hit.id);
+      const c = engine.getComponent(hit.id)!;
+      compDrag.current = { id: hit.id, dc: hole.col - c.anchor.col, dr: hole.row - c.anchor.row };
+    } else {
+      onSelect?.(null);
+      pan.current = { x: e.clientX, y: e.clientY, ox: view.offsetX, oy: view.offsetY };
+    }
   };
 
-  // Zoom around the cursor.
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (compDrag.current) {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const hole = holeAt(e.clientX - rect.left, e.clientY - rect.top);
+      const d = compDrag.current;
+      onMove?.(d.id, { col: hole.col - d.dc, row: hole.row - d.dr });
+      return;
+    }
+    const p = pan.current;
+    if (p) setView((v) => ({ ...v, offsetX: p.ox + (e.clientX - p.x), offsetY: p.oy + (e.clientY - p.y) }));
+  };
+
+  const endDrag = () => {
+    pan.current = null;
+    compDrag.current = null;
+  };
+
   const onWheel = (e: React.WheelEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
     setView((v) => {
-      const factor = Math.exp(-e.deltaY * 0.0015);
-      const newScale = Math.min(6, Math.max(0.08, v.scale * factor));
-      // Keep the world point under the cursor fixed.
+      const newScale = Math.min(6, Math.max(0.08, v.scale * Math.exp(-e.deltaY * 0.0015)));
       const worldX = (px - v.offsetX) / (CELL_PX * v.scale);
       const worldY = (py - v.offsetY) / (CELL_PX * v.scale);
-      return {
-        scale: newScale,
-        offsetX: px - worldX * CELL_PX * newScale,
-        offsetY: py - worldY * CELL_PX * newScale,
-      };
+      return { scale: newScale, offsetX: px - worldX * CELL_PX * newScale, offsetY: py - worldY * CELL_PX * newScale };
     });
   };
 
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: drag.current ? "grabbing" : "grab" }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: armedFootprint ? "copy" : "grab" }}
     >
       <canvas
         ref={canvasRef}

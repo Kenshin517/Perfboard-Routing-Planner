@@ -62,6 +62,6 @@ describe("BoardEngine — board skeleton", () => {
     expect(() => createBoard({ cols: 0, rows: 10 })).toThrow();
     expect(() => createBoard({ cols: 10, rows: -1 })).toThrow();
     expect(() => createBoard({ cols: 10.5, rows: 10 })).toThrow();
-    expect(() => new BoardEngine({ cols: 10, rows: 10, pitchMm: 0 })).toThrow();
+    expect(() => createBoard({ cols: 10, rows: 10, pitchMm: 0 })).toThrow();
   });
 });
