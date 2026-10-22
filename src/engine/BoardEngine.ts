@@ -11,6 +11,7 @@ import type {
   BoardState,
   Footprint,
   HoleCoord,
+  Layer,
   Net,
   PinDef,
   PlacedComponent,
@@ -20,6 +21,13 @@ import type {
 import { coordToLabel } from "./coordinates";
 import { DEFAULT_FOOTPRINTS, makeGenericFootprint, rotateOffset } from "./footprints";
 import { mapKicadFootprint, type ParsedNetlist } from "./netlist";
+import { findPath } from "./router";
+
+export interface RouteOptions {
+  layer?: Layer;
+  /** Extra blocked cells for the pathfinder (e.g. existing bare traces). */
+  isBlocked?: (c: HoleCoord) => boolean;
+}
 
 /** Minimal union-find over integer ids. */
 class UnionFind {
@@ -373,6 +381,58 @@ export class BoardEngine {
       }
     }
     return wires;
+  }
+
+  // ---- routing ----
+
+  /** The resolved pin located exactly at a hole, if any. */
+  pinAt(coord: HoleCoord): ResolvedPin | undefined {
+    return this.allPins().find((p) => p.coord.col === coord.col && p.coord.row === coord.row);
+  }
+
+  /** Net name that owns the pin at this hole, if any. */
+  netAt(coord: HoleCoord): string | undefined {
+    const pin = this.pinAt(coord);
+    if (!pin) return undefined;
+    return this.state.nets.find((n) => n.pins.some((x) => x.ref === pin.ref && x.pin === pin.pin))?.name;
+  }
+
+  /** Add a trace from an explicit hole path. Returns its id. */
+  addTrace(path: HoleCoord[], opts: { layer?: Layer; net?: string } = {}): string {
+    if (path.length < 2) throw new Error("addTrace: path needs >= 2 holes");
+    for (const h of path) if (!this.hasHole(h.col, h.row)) throw new Error(`addTrace: hole out of bounds ${h.col},${h.row}`);
+    const id = `trc_${++this.seq}`;
+    this.state.traces.push({
+      id,
+      layer: opts.layer ?? "bottom-copper",
+      net: opts.net,
+      path: path.map((h) => ({ ...h })),
+    });
+    return id;
+  }
+
+  /**
+   * Route a connection between two holes with A*, add it as a trace.
+   * The net is auto-detected when both ends belong to the same net.
+   * Returns the trace id, or null if no path exists.
+   */
+  routePadToPad(a: HoleCoord, b: HoleCoord, opts: RouteOptions = {}): string | null {
+    const path = findPath(a, b, { cols: this.cols, rows: this.rows, isBlocked: opts.isBlocked });
+    if (!path) return null;
+    const na = this.netAt(a), nb = this.netAt(b);
+    return this.addTrace(path, { layer: opts.layer ?? "bottom-copper", net: na && na === nb ? na : undefined });
+  }
+
+  removeTrace(id: string): void {
+    const i = this.state.traces.findIndex((t) => t.id === id);
+    if (i < 0) throw new Error(`removeTrace: no trace "${id}"`);
+    this.state.traces.splice(i, 1);
+  }
+
+  setTraceLayer(id: string, layer: Layer): void {
+    const t = this.state.traces.find((t) => t.id === id);
+    if (!t) throw new Error(`setTraceLayer: no trace "${id}"`);
+    t.layer = layer;
   }
 
   // ---- serialisation ----

@@ -24,6 +24,12 @@ interface Props {
   armedFootprint?: string | null;
   selectedId?: string | null;
   airwires?: Airwire[];
+  /** Bottom (solder) view: mirror horizontally. */
+  flipped?: boolean;
+  /** Routing mode: clicks pick pads instead of placing/selecting. */
+  routing?: boolean;
+  routeStart?: HoleCoord | null;
+  onRoutePick?: (hole: HoleCoord) => void;
   onSelect?: (id: string | null) => void;
   onPlace?: (footprint: string, hole: HoleCoord) => void;
   onMove?: (id: string, anchor: HoleCoord) => void;
@@ -44,6 +50,10 @@ export default function PerfboardCanvas({
   armedFootprint = null,
   selectedId = null,
   airwires = [],
+  flipped = false,
+  routing = false,
+  routeStart = null,
+  onRoutePick,
   onSelect,
   onPlace,
   onMove,
@@ -82,14 +92,15 @@ export default function PerfboardCanvas({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, size.h, resetToken]);
 
-  // Map screen px -> nearest hole.
+  // Map screen px -> nearest hole (flip-aware).
   const holeAt = useCallback(
     (px: number, py: number): HoleCoord => {
-      const col = Math.round((px - view.offsetX) / (CELL_PX * view.scale));
+      const dispCol = Math.round((px - view.offsetX) / (CELL_PX * view.scale));
       const row = Math.round((py - view.offsetY) / (CELL_PX * view.scale));
+      const col = flipped ? engine.cols - 1 - dispCol : dispCol;
       return { col, row };
     },
-    [view],
+    [view, flipped, engine],
   );
 
   // Component bounding boxes (in holes) for hit-testing.
@@ -136,7 +147,8 @@ export default function PerfboardCanvas({
     ctx.clearRect(0, 0, size.w, size.h);
 
     const { scale, offsetX, offsetY } = view;
-    const sx = (c: number) => c * CELL_PX * scale + offsetX;
+    const dispCol = (c: number) => (flipped ? engine.cols - 1 - c : c);
+    const sx = (c: number) => dispCol(c) * CELL_PX * scale + offsetX;
     const sy = (r: number) => r * CELL_PX * scale + offsetY;
     const step = CELL_PX * scale;
     const padR = Math.max(1.5, step * 0.34);
@@ -169,6 +181,36 @@ export default function PerfboardCanvas({
         ctx.stroke();
       }
       ctx.restore();
+    }
+
+    // Traces.
+    for (const t of engine.getTraces()) {
+      if (t.path.length < 2) continue;
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      if (t.layer === "jumper") {
+        ctx.strokeStyle = "#e0b34a";
+        ctx.lineWidth = Math.max(1.5, step * 0.14);
+        ctx.setLineDash([step * 0.35, step * 0.25]);
+      } else {
+        ctx.strokeStyle = "#49c06a";
+        ctx.lineWidth = Math.max(2, step * 0.18);
+      }
+      ctx.beginPath();
+      ctx.moveTo(sx(t.path[0].col), sy(t.path[0].row));
+      for (let i = 1; i < t.path.length; i++) ctx.lineTo(sx(t.path[i].col), sy(t.path[i].row));
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Route start highlight.
+    if (routing && routeStart) {
+      ctx.beginPath();
+      ctx.arc(sx(routeStart.col), sy(routeStart.row), Math.max(3, step * 0.4), 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffd166";
+      ctx.lineWidth = 2;
+      ctx.stroke();
     }
 
     // Components.
@@ -219,7 +261,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
@@ -227,6 +269,10 @@ export default function PerfboardCanvas({
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
     const hole = holeAt(px, py);
 
+    if (routing) {
+      if (engine.hasHole(hole.col, hole.row)) onRoutePick?.(hole);
+      return;
+    }
     if (armedFootprint) {
       onPlace?.(armedFootprint, hole);
       return;
@@ -274,7 +320,7 @@ export default function PerfboardCanvas({
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: armedFootprint ? "copy" : "grab" }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: routing ? "crosshair" : armedFootprint ? "copy" : "grab" }}
     >
       <canvas
         ref={canvasRef}

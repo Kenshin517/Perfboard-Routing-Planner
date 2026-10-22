@@ -40,6 +40,9 @@ export default function Home() {
   const [resetToken, setResetToken] = useState(0);
   const [armed, setArmed] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [routing, setRouting] = useState(false);
+  const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
+  const [flipped, setFlipped] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const netlistRef = useRef<HTMLInputElement>(null);
@@ -111,6 +114,27 @@ export default function Home() {
     }
   };
 
+  const toggleRouting = () => {
+    setRouting((r) => {
+      const next = !r;
+      if (next) setArmed(null);
+      setRouteStart(null);
+      setSelected(null);
+      return next;
+    });
+  };
+
+  const onRoutePick = (hole: HoleCoord) => {
+    if (!routeStart) {
+      setRouteStart(hole);
+      return;
+    }
+    const id = engine.routePadToPad(routeStart, hole);
+    setRouteStart(null);
+    if (!id) alert("Gak nemu jalur antara dua titik itu.");
+    else bump();
+  };
+
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
   const airwires = engine.ratsnest();
   const applySize = (c: number, r: number) => {
@@ -124,6 +148,7 @@ export default function Home() {
       if (e.key === "Escape") {
         setArmed(null);
         setSelected(null);
+        setRouteStart(null);
       } else if ((e.key === "r" || e.key === "R") && selected) {
         engine.rotateBy90(selected);
         bump();
@@ -173,6 +198,16 @@ export default function Home() {
             {engine.cols} × {engine.rows} &middot; {engine.getComponents().length} parts
           </span>
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 13, color: airwires.length ? "#8fd79a" : "var(--muted)" }}>
+              {airwires.length} airwire{airwires.length === 1 ? "" : "s"}
+            </span>
+            <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }}>
+              {routing ? "Routing…" : "Route"}
+            </button>
+            <button onClick={() => setFlipped((f) => !f)} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
+              {flipped ? "Bottom view" : "Top view"}
+            </button>
+            <span style={{ width: 1, height: 20, background: "var(--border)" }} />
             {selComp && (
               <>
                 <span style={{ fontSize: 13, color: "var(--accent)" }}>
@@ -213,6 +248,10 @@ export default function Home() {
             armedFootprint={armed}
             selectedId={selected}
             airwires={airwires}
+            flipped={flipped}
+            routing={routing}
+            routeStart={routeStart}
+            onRoutePick={onRoutePick}
             onSelect={setSelected}
             onPlace={place}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}
@@ -265,3 +304,4 @@ const footerStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
 const input: React.CSSProperties = { width: 56, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 };
 const btn: React.CSSProperties = { padding: "5px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" };
+const activeBtn: React.CSSProperties = { borderColor: "var(--accent)", color: "var(--accent)" };
