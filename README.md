@@ -57,9 +57,9 @@ docs/
 
 ## Alur pakai
 
-1. **Import netlist** (KiCad XML) → part masuk tray **"Unplaced"**; klik tiap part lalu taruh di board (placement manual, sesuai spec). Atau ambil part baru dari palette.
+1. **Import netlist** (KiCad `.net` atau XML) → part masuk tray **"Unplaced"**; klik tiap part lalu taruh di board (placement manual, sesuai spec). Atau ambil part baru dari palette.
 2. Atur penempatan: drag geser, R rotate, Del hapus. Airwire (garis putus hijau) nunjukin koneksi yang belum di-route.
-3. **Route**: klik Route → pad asal → pad tujuan → muncul **jalur usulan**; **Confirm (Enter)** atau **Cancel (Esc)**. Atau **Autoroute** sekali klik.
+3. **Route** (free-draw): klik Route → klik **lubang demi lubang** (jalur ngikut grid otomatis), **Enter / double-click** = selesai, Esc = batal. Atau **Autoroute** sekali klik.
 4. Crossing bare-wire ditandai **merah**; klik **Jumper-kan crossings** atau pilih trace → `→ jumper`. Counter nunjukin trace/jumper/crossing.
 5. **Flip** (Top/Bottom) buat lihat sisi solder (mirror).
 6. **Build list** = resep rakit teks. **PDF** = cetak 1:1 (2 halaman: placement + routing mirror, ada kotak kalibrasi 50mm). **3D** = preview box komponen.

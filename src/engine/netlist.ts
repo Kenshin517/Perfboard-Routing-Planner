@@ -1,9 +1,11 @@
 /**
- * KiCad XML intermediate netlist parser + footprint mapping.
+ * KiCad netlist parser + footprint mapping.
  *
- * Pure and DOM-free (regex over the known KiCad structure) so it runs in the
- * engine seam / Node tests without a browser. v1 supports exactly one format:
- * the XML netlist Eeschema exports (the one BOM tools consume).
+ * Pure and DOM-free so it runs in the engine seam / Node tests without a
+ * browser. Supports the two formats KiCad exports:
+ *   - XML intermediate netlist (what BOM tools consume)
+ *   - the default ".net" S-expression netlist (Eeschema → Export Netlist)
+ * `parseNetlist` auto-detects which one it was given.
  */
 
 export interface NetlistComponent {
@@ -68,6 +70,114 @@ export function parseKicadXmlNetlist(xml: string): ParsedNetlist {
   }
 
   return { components, nets };
+}
+
+// ---- S-expression (.net) netlist ----
+
+type SExpr = string | SExpr[];
+
+/** Parse an S-expression string into nested arrays / tokens. */
+function parseSExpr(src: string): SExpr {
+  let i = 0;
+  const n = src.length;
+  function parse(): SExpr {
+    skipWs();
+    if (src[i] === "(") {
+      i++; // consume '('
+      const list: SExpr[] = [];
+      for (;;) {
+        skipWs();
+        if (i >= n) throw new Error("parseSExpr: unexpected end of input");
+        if (src[i] === ")") {
+          i++;
+          return list;
+        }
+        list.push(parse());
+      }
+    }
+    return atom();
+  }
+  function skipWs() {
+    while (i < n && /\s/.test(src[i])) i++;
+  }
+  function atom(): string {
+    if (src[i] === '"') {
+      i++; // opening quote
+      let s = "";
+      while (i < n && src[i] !== '"') {
+        if (src[i] === "\\" && i + 1 < n) i++; // skip escape char
+        s += src[i++];
+      }
+      i++; // closing quote
+      return s;
+    }
+    let s = "";
+    while (i < n && !/[\s()]/.test(src[i])) s += src[i++];
+    return s;
+  }
+  skipWs();
+  if (src[i] !== "(") throw new Error("parseSExpr: expected '('");
+  return parse();
+}
+
+function isList(x: SExpr): x is SExpr[] {
+  return Array.isArray(x);
+}
+
+/** First child list whose head matches `head`. */
+function child(node: SExpr[], head: string): SExpr[] | undefined {
+  return node.find((c): c is SExpr[] => isList(c) && c[0] === head);
+}
+
+/** All child lists whose head matches `head`. */
+function children(node: SExpr[], head: string): SExpr[][] {
+  return node.filter((c): c is SExpr[] => isList(c) && c[0] === head);
+}
+
+/** Value of a `(head value)` child, as a string. */
+function childValue(node: SExpr[], head: string): string {
+  const c = child(node, head);
+  return c && typeof c[1] === "string" ? c[1] : "";
+}
+
+/** Parse a KiCad ".net" S-expression netlist. Throws on clearly-wrong input. */
+export function parseKicadNetNetlist(src: string): ParsedNetlist {
+  if (!/\(\s*export\b/.test(src) || !/\(\s*nets\b/.test(src)) {
+    throw new Error("parseKicadNetNetlist: not a KiCad .net netlist (missing (export)/(nets))");
+  }
+  const root = parseSExpr(src);
+  if (!isList(root) || root[0] !== "export") throw new Error("parseKicadNetNetlist: missing (export)");
+
+  const compsNode = child(root, "components") ?? [];
+  const components: NetlistComponent[] = [];
+  for (const comp of children(compsNode, "comp")) {
+    const ref = childValue(comp, "ref");
+    if (!ref) continue;
+    components.push({ ref, value: childValue(comp, "value"), footprint: childValue(comp, "footprint") });
+  }
+
+  const netsNode = child(root, "nets") ?? [];
+  const nets: NetlistNet[] = [];
+  for (const net of children(netsNode, "net")) {
+    const name = childValue(net, "name") || childValue(net, "code");
+    const nodes: { ref: string; pin: string }[] = [];
+    for (const nd of children(net, "node")) {
+      const ref = childValue(nd, "ref");
+      const pin = childValue(nd, "pin");
+      if (ref && pin) nodes.push({ ref, pin });
+    }
+    if (nodes.length > 0) nets.push({ name, nodes });
+  }
+
+  return { components, nets };
+}
+
+/** Auto-detect XML vs S-expression and parse accordingly. */
+export function parseNetlist(src: string): ParsedNetlist {
+  const trimmed = src.trimStart();
+  if (trimmed.startsWith("<")) return parseKicadXmlNetlist(src);
+  if (trimmed.startsWith("(")) return parseKicadNetNetlist(src);
+  throw new Error("parseNetlist: unrecognised netlist format (expected KiCad XML or .net)");
 }
 
 /**

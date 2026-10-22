@@ -1,6 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { parseKicadXmlNetlist, mapKicadFootprint } from "./netlist";
+import { parseKicadXmlNetlist, parseKicadNetNetlist, parseNetlist, mapKicadFootprint } from "./netlist";
 import { createBoard } from "./BoardEngine";
+
+const SAMPLE_NET = `(export (version "E")
+  (components
+    (comp (ref "U1") (value "NE555") (footprint "Package_DIP:DIP-8_W7.62mm"))
+    (comp (ref "R1") (value "10k") (footprint "Resistor_THT:R_Axial_DIN0207"))
+    (comp (ref "J1") (value "Conn_01x02") (footprint "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm")))
+  (nets
+    (net (code "1") (name "GND")
+      (node (ref "U1") (pin "1"))
+      (node (ref "R1") (pin "2"))
+      (node (ref "J1") (pin "2")))
+    (net (code "2") (name "VCC")
+      (node (ref "U1") (pin "8"))
+      (node (ref "J1") (pin "1")))))`;
 
 const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
 <export version="E">
@@ -35,6 +49,39 @@ describe("KiCad XML netlist parser", () => {
 
   it("rejects non-netlist input", () => {
     expect(() => parseKicadXmlNetlist("<html></html>")).toThrow();
+  });
+});
+
+describe("KiCad .net (S-expression) parser", () => {
+  it("extracts the same components and nets as the XML form", () => {
+    const p = parseKicadNetNetlist(SAMPLE_NET);
+    expect(p.components).toHaveLength(3);
+    expect(p.components[0]).toEqual({ ref: "U1", value: "NE555", footprint: "Package_DIP:DIP-8_W7.62mm" });
+    expect(p.nets).toHaveLength(2);
+    const gnd = p.nets.find((n) => n.name === "GND")!;
+    expect(gnd.nodes).toHaveLength(3);
+    expect(gnd.nodes).toContainEqual({ ref: "J1", pin: "2" });
+  });
+
+  it("handles unquoted tokens (older KiCad)", () => {
+    const src = `(export (version D)
+      (components (comp (ref U1) (value NE555) (footprint Package_DIP:DIP-8_W7.62mm)))
+      (nets (net (code 1) (name GND) (node (ref U1) (pin 1)))))`;
+    const p = parseKicadNetNetlist(src);
+    expect(p.components[0].ref).toBe("U1");
+    expect(p.nets[0].nodes[0]).toEqual({ ref: "U1", pin: "1" });
+  });
+
+  it("rejects non-netlist S-expressions", () => {
+    expect(() => parseKicadNetNetlist("(foo (bar))")).toThrow();
+  });
+});
+
+describe("parseNetlist auto-detect", () => {
+  it("picks the right parser by content", () => {
+    expect(parseNetlist(SAMPLE).components).toHaveLength(3);
+    expect(parseNetlist(SAMPLE_NET).components).toHaveLength(3);
+    expect(() => parseNetlist("just some text")).toThrow();
   });
 });
 

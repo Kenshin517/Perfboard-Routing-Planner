@@ -7,7 +7,7 @@ import { refPrefixFor } from "@/engine/footprints";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
 import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
-import { parseKicadXmlNetlist } from "@/engine/netlist";
+import { parseNetlist } from "@/engine/netlist";
 import { exportPdf } from "@/export/pdf";
 import { exportPng } from "@/export/png";
 import { palette } from "@/lib/theme";
@@ -37,10 +37,7 @@ export default function Home() {
   const [armed, setArmed] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [routing, setRouting] = useState(false);
-  const [routeMode, setRouteMode] = useState<"auto" | "free">("auto");
-  const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
   const [hoverHole, setHoverHole] = useState<HoleCoord | null>(null);
-  const [pending, setPending] = useState<{ path: HoleCoord[]; net?: string } | null>(null);
   const [drawPath, setDrawPath] = useState<HoleCoord[]>([]);
   const [placingId, setPlacingId] = useState<string | null>(null);
   const [flipped, setFlipped] = useState(false);
@@ -59,8 +56,6 @@ export default function Home() {
     setSelected(null);
     setSelectedTrace(null);
     setPlacingId(null);
-    setPending(null);
-    setRouteStart(null);
     setHoverHole(null);
     setDrawPath([]);
   };
@@ -154,7 +149,7 @@ export default function Home() {
     e.target.value = "";
     if (!file) return;
     try {
-      const parsed = parseKicadXmlNetlist(await file.text());
+      const parsed = parseNetlist(await file.text());
       pushHistory();
       const res = engine.loadNetlist(parsed);
       setResetToken((t) => t + 1);
@@ -162,7 +157,7 @@ export default function Home() {
       const note = `${res.added} komponen masuk ke tray "Unplaced" — klik tiap part lalu taruh di board.`;
       alert(res.generic.length ? `${note}\nFootprint generic (belum dikenal): ${res.generic.join(", ")}.` : note);
     } catch {
-      alert("Netlist tidak valid. Export dari KiCad sebagai XML netlist ya.");
+      alert("Netlist tidak kebaca. Export dari KiCad: Eeschema → Export Netlist (.net), atau XML netlist. File lain belum didukung.");
     }
   };
 
@@ -173,41 +168,16 @@ export default function Home() {
         setArmed(null);
         setPlacingId(null);
       }
-      setRouteStart(null);
       setHoverHole(null);
-      setPending(null);
       setDrawPath([]);
       setSelected(null);
       return next;
     });
   };
 
+  // Routing is always free-draw: each click adds a waypoint.
   const onRoutePick = (hole: HoleCoord) => {
-    if (routeMode === "free") {
-      freeDrawPick(hole);
-      return;
-    }
-    if (!routeStart) {
-      setRouteStart(hole);
-      setHoverHole(null);
-      return;
-    }
-    const pv = engine.previewRoute(routeStart, hole);
-    setRouteStart(null);
-    setHoverHole(null);
-    if (!pv) alert("Gak nemu jalur antara dua titik itu.");
-    else setPending(pv); // wait for user approval (Spec: "user approve")
-  };
-
-  const confirmRoute = () => {
-    if (!pending) return;
-    mutate(() => engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net }));
-    setPending(null);
-  };
-  const cancelRoute = () => {
-    setPending(null);
-    setRouteStart(null);
-    setHoverHole(null);
+    freeDrawPick(hole);
   };
 
   // Free-draw: append a clicked hole (blocking foreign pads), finish on Enter/double-click.
@@ -243,16 +213,10 @@ export default function Home() {
   };
 
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
-  const previewPath =
-    routing && routeMode === "auto" && routeStart && hoverHole
-      ? engine.previewRoute(routeStart, hoverHole)?.path ?? null
-      : null;
   // Free-draw: the grid path stitched through clicked waypoints (+ hover).
   const freePoints = hoverHole ? [...drawPath, hoverHole] : drawPath;
   const freeStitched =
-    routing && routeMode === "free" && freePoints.length >= 2
-      ? engine.routeWaypoints(freePoints)?.path ?? null
-      : null;
+    routing && freePoints.length >= 2 ? engine.routeWaypoints(freePoints)?.path ?? null : null;
   const unplaced = engine.getUnplacedComponents();
   const airwires = engine.ratsnest();
   const crossPairs = engine.crossings();
@@ -281,8 +245,7 @@ export default function Home() {
     }
     if (mod) return; // leave other ctrl/cmd combos to the browser
     if (k === "enter") {
-      if (routeMode === "free" && drawPath.length >= 2) finishFreeDraw();
-      else if (pending) confirmRoute();
+      if (routing && drawPath.length >= 2) finishFreeDraw();
     } else if (k === "escape") {
       setArmed(null);
       setSelectedTrace(null);
@@ -326,8 +289,7 @@ export default function Home() {
                 onClick={() => {
                   setArmed(null);
                   setRouting(false);
-                  setPending(null);
-                  setRouteStart(null);
+                  setDrawPath([]);
                   setPlacingId((p) => (p === c.id ? null : c.id));
                 }}
                 style={{ ...paletteBtn, ...(placingId === c.id ? paletteBtnActive : {}) }}
@@ -381,27 +343,15 @@ export default function Home() {
                 Jumper-kan crossings
               </button>
             )}
-            {pending && (
-              <>
-                <span style={{ fontSize: 13, color: palette.routeStart }}>Route {pending.net ?? "?"} ({pending.path.length} holes)?</span>
-                <button onClick={confirmRoute} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Confirm (Enter)</button>
-                <button onClick={cancelRoute} style={btn}>Cancel (Esc)</button>
-              </>
-            )}
             {placingId && (
               <span style={{ fontSize: 13, color: "var(--accent)" }}>
                 Taruh {engine.getComponent(placingId)?.ref} di board… Esc batal
               </span>
             )}
-            <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }}>
+            <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }} title="Klik lubang demi lubang; Enter / double-click = selesai">
               {routing ? "Routing…" : "Route"}
             </button>
-            {routing && (
-              <button onClick={() => { setRouteMode((m) => (m === "auto" ? "free" : "auto")); setRouteStart(null); setDrawPath([]); setPending(null); }} style={btn}>
-                {routeMode === "auto" ? "mode: auto" : "mode: free-draw"}
-              </button>
-            )}
-            {routing && routeMode === "free" && drawPath.length > 0 && (
+            {routing && drawPath.length > 0 && (
               <>
                 <span style={{ fontSize: 13, color: palette.routeStart }}>{drawPath.length} holes</span>
                 <button onClick={finishFreeDraw} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Finish (Enter)</button>
@@ -484,11 +434,8 @@ export default function Home() {
             airwires={airwires}
             flipped={flipped}
             routing={routing}
-            routeStart={routeStart}
             crossingIds={crossingIds}
             selectedTraceId={selectedTrace}
-            pendingPath={pending?.path ?? null}
-            previewPath={previewPath}
             placingComponentId={placingId}
             onRoutePick={onRoutePick}
             onHover={setHoverHole}
@@ -508,7 +455,9 @@ export default function Home() {
         {showBuildList && <BuildListPanel text={engine.buildList()} onClose={() => setShowBuildList(false)} />}
 
         <footer style={footerStyle}>
-          Pilih part di kiri &rarr; klik board untuk taruh &middot; klik part untuk pilih/geser &middot; R = rotate, Del = hapus &middot; scroll = zoom, drag = pan
+          {routing
+            ? "Route: klik lubang demi lubang (jalur ngikut grid) · Enter / double-click = selesai · Esc = batal"
+            : "Pilih part di kiri → klik board untuk taruh · klik part untuk pilih/geser · R rotate, Del hapus · Ctrl+Z/Y undo · scroll zoom, drag pan"}
         </footer>
       </section>
     </main>
