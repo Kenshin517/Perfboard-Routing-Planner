@@ -217,6 +217,12 @@ export default function Home() {
                 {counts.bottomCrossings} crossing{counts.bottomCrossings === 1 ? "" : "s"}
               </span>
             </span>
+            <button onClick={() => { const r = engine.autoroute(); setSelectedTrace(null); bump(); if (airwires.length === 0 && r.bottom + r.jumper === 0) return; }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
+              Autoroute
+            </button>
+            {counts.traces > 0 && (
+              <button onClick={() => { engine.clearTraces(); setSelectedTrace(null); bump(); }} style={btn}>Clear routing</button>
+            )}
             {counts.bottomCrossings > 0 && (
               <button onClick={() => { engine.promoteCrossingsToJumper(); bump(); }} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
                 Jumper-kan crossings

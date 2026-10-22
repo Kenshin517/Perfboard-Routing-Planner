@@ -430,6 +430,11 @@ export class BoardEngine {
     this.state.traces.splice(i, 1);
   }
 
+  /** Remove every trace (keeps components and nets). */
+  clearTraces(): void {
+    this.state.traces = [];
+  }
+
   setTraceLayer(id: string, layer: Layer): void {
     const t = this.state.traces.find((t) => t.id === id);
     if (!t) throw new Error(`setTraceLayer: no trace "${id}"`);
@@ -477,6 +482,65 @@ export class BoardEngine {
       promoted++;
     }
     return promoted;
+  }
+
+  // ---- autoroute ----
+
+  /**
+   * Greedy autoroute of all unrouted connections. Short links first; each tries
+   * bottom-copper (avoiding other nets' pads and bare traces), and is promoted to
+   * the jumper layer if no clear path exists or it would cross a bare trace.
+   * A "helper" — not an optimal solver. Returns how many links were made.
+   */
+  autoroute(): { bottom: number; jumper: number } {
+    const key = (c: HoleCoord) => `${c.col},${c.row}`;
+    let bottom = 0, jumper = 0;
+
+    for (let guard = 0; guard < 5000; guard++) {
+      const rats = this.ratsnest();
+      if (rats.length === 0) break;
+      rats.sort(
+        (x, y) =>
+          Math.abs(x.a.col - x.b.col) + Math.abs(x.a.row - x.b.row) -
+          (Math.abs(y.a.col - y.b.col) + Math.abs(y.a.row - y.b.row)),
+      );
+      const w = rats[0];
+
+      // Holes to avoid for a bare bottom route: other nets' bare traces and pads.
+      const blocked = new Set<string>();
+      for (const t of this.state.traces) {
+        if (t.layer === "bottom-copper" && (t.net ?? "") !== (w.net ?? "\0")) {
+          for (const h of t.path) blocked.add(key(h));
+        }
+      }
+      for (const p of this.allPins()) {
+        const net = this.state.nets.find((n) => n.pins.some((x) => x.ref === p.ref && x.pin === p.pin))?.name;
+        if ((net ?? "") !== (w.net ?? "\0")) blocked.add(key(p.coord));
+      }
+
+      const bottomPath = findPath(w.a, w.b, {
+        cols: this.cols,
+        rows: this.rows,
+        isBlocked: (c) => blocked.has(key(c)),
+      });
+
+      if (bottomPath) {
+        const id = this.addTrace(bottomPath, { layer: "bottom-copper", net: w.net });
+        if (this.crossings().some((p) => p.a === id || p.b === id)) {
+          this.setTraceLayer(id, "jumper");
+          jumper++;
+        } else {
+          bottom++;
+        }
+      } else {
+        // No clear bottom path — run a jumper (insulated, may cross anything).
+        const free = findPath(w.a, w.b, { cols: this.cols, rows: this.rows });
+        if (!free) break; // genuinely unreachable; stop to avoid an infinite loop
+        this.addTrace(free, { layer: "jumper", net: w.net });
+        jumper++;
+      }
+    }
+    return { bottom, jumper };
   }
 
   // ---- build-list ("resep rakit") ----
