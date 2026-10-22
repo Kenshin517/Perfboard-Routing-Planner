@@ -1,0 +1,80 @@
+import { describe, it, expect } from "vitest";
+import { parseKicadXmlNetlist, mapKicadFootprint } from "./netlist";
+import { createBoard } from "./BoardEngine";
+
+const SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
+<export version="E">
+  <components>
+    <comp ref="U1"><value>NE555</value><footprint>Package_DIP:DIP-8_W7.62mm</footprint></comp>
+    <comp ref="R1"><value>10k</value><footprint>Resistor_THT:R_Axial_DIN0207</footprint></comp>
+    <comp ref="J1"><value>Conn_01x02</value><footprint>Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm</footprint></comp>
+  </components>
+  <nets>
+    <net code="1" name="GND">
+      <node ref="U1" pin="1"/>
+      <node ref="R1" pin="2"/>
+      <node ref="J1" pin="2"/>
+    </net>
+    <net code="2" name="VCC">
+      <node ref="U1" pin="8"/>
+      <node ref="J1" pin="1"/>
+    </net>
+  </nets>
+</export>`;
+
+describe("KiCad XML netlist parser", () => {
+  it("extracts components and nets", () => {
+    const p = parseKicadXmlNetlist(SAMPLE);
+    expect(p.components).toHaveLength(3);
+    expect(p.components[0]).toEqual({ ref: "U1", value: "NE555", footprint: "Package_DIP:DIP-8_W7.62mm" });
+    expect(p.nets).toHaveLength(2);
+    const gnd = p.nets.find((n) => n.name === "GND")!;
+    expect(gnd.nodes).toHaveLength(3);
+    expect(gnd.nodes).toContainEqual({ ref: "J1", pin: "2" });
+  });
+
+  it("rejects non-netlist input", () => {
+    expect(() => parseKicadXmlNetlist("<html></html>")).toThrow();
+  });
+});
+
+describe("footprint mapping", () => {
+  it("maps common KiCad footprints to the library", () => {
+    expect(mapKicadFootprint("Package_DIP:DIP-8_W7.62mm")).toBe("DIP-8");
+    expect(mapKicadFootprint("Resistor_THT:R_Axial_DIN0207")).toBe("R_AXIAL_0.4");
+    expect(mapKicadFootprint("Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm")).toBe("PINHDR_1x2");
+    expect(mapKicadFootprint("Something:Unknown_Part")).toBeUndefined();
+  });
+});
+
+describe("loadNetlist + ratsnest", () => {
+  it("instantiates components, sets nets, and builds a ratsnest", () => {
+    const b = createBoard({ cols: 40, rows: 20 });
+    const res = b.loadNetlist(parseKicadXmlNetlist(SAMPLE));
+    expect(res.added).toBe(3);
+    expect(res.generic).toHaveLength(0); // all three mapped to the library
+    expect(b.getComponents()).toHaveLength(3);
+    expect(b.getNets()).toHaveLength(2);
+
+    // GND (3 pins) -> 2 airwires, VCC (2 pins) -> 1 airwire = 3 total.
+    const rats = b.ratsnest();
+    expect(rats).toHaveLength(3);
+    expect(rats.filter((w) => w.net === "GND")).toHaveLength(2);
+    expect(rats.filter((w) => w.net === "VCC")).toHaveLength(1);
+  });
+
+  it("falls back to a generic footprint using the netlist's own pin names", () => {
+    const xml = `<export version="E">
+      <components><comp ref="Q9"><value>?</value><footprint>Mystery:Thing</footprint></comp></components>
+      <nets>
+        <net code="1" name="N1"><node ref="Q9" pin="A"/><node ref="Q9" pin="C"/></net>
+      </nets>
+    </export>`;
+    const b = createBoard({ cols: 20, rows: 20 });
+    const res = b.loadNetlist(parseKicadXmlNetlist(xml));
+    expect(res.generic).toContain("Q9");
+    expect(b.getFootprint("GEN_Q9")!.pins.map((p) => p.num)).toEqual(["A", "C"]);
+    // same-component net with both pins -> 1 airwire between them
+    expect(b.ratsnest()).toHaveLength(1);
+  });
+});

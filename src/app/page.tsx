@@ -5,6 +5,7 @@ import { createBoard, BoardEngine } from "@/engine/BoardEngine";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
 import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
+import { parseKicadXmlNetlist } from "@/engine/netlist";
 
 function prefixFor(fp: string): string {
   if (fp.startsWith("DIP")) return "U";
@@ -41,6 +42,7 @@ export default function Home() {
   const [selected, setSelected] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const netlistRef = useRef<HTMLInputElement>(null);
 
   const swapEngine = (next: BoardEngine) => {
     engineRef.current = next;
@@ -92,7 +94,25 @@ export default function Home() {
     }
   };
 
+  const onImportNetlist = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const parsed = parseKicadXmlNetlist(await file.text());
+      const res = engine.loadNetlist(parsed);
+      setResetToken((t) => t + 1);
+      bump();
+      if (res.generic.length) {
+        alert(`Imported ${res.added} komponen. Footprint generic (belum dikenal): ${res.generic.join(", ")} — atur manual kalau perlu.`);
+      }
+    } catch {
+      alert("Netlist tidak valid. Export dari KiCad sebagai XML netlist ya.");
+    }
+  };
+
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
+  const airwires = engine.ratsnest();
   const applySize = (c: number, r: number) => {
     engine.resize(c, r);
     bump();
@@ -177,9 +197,11 @@ export default function Home() {
             </label>
             <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
             <span style={{ width: 1, height: 20, background: "var(--border)" }} />
+            <button onClick={() => netlistRef.current?.click()} style={btn}>Import netlist</button>
             <button onClick={() => downloadProject(engine.serialize())} style={btn}>Export</button>
             <button onClick={() => fileRef.current?.click()} style={btn}>Import</button>
             <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImportFile} style={{ display: "none" }} />
+            <input ref={netlistRef} type="file" accept=".net,.xml,.txt" onChange={onImportNetlist} style={{ display: "none" }} />
           </div>
         </header>
 
@@ -190,6 +212,7 @@ export default function Home() {
             resetToken={resetToken}
             armedFootprint={armed}
             selectedId={selected}
+            airwires={airwires}
             onSelect={setSelected}
             onPlace={place}
             onMove={(id, anchor) => { engine.moveComponent(id, anchor); bump(); }}

@@ -6,17 +6,41 @@
  */
 
 import type {
+  Airwire,
   BoardConfig,
   BoardState,
   Footprint,
   HoleCoord,
   Net,
+  PinDef,
   PlacedComponent,
   Rotation,
   Trace,
 } from "./types";
 import { coordToLabel } from "./coordinates";
-import { DEFAULT_FOOTPRINTS, rotateOffset } from "./footprints";
+import { DEFAULT_FOOTPRINTS, makeGenericFootprint, rotateOffset } from "./footprints";
+import { mapKicadFootprint, type ParsedNetlist } from "./netlist";
+
+/** Minimal union-find over integer ids. */
+class UnionFind {
+  private p: number[];
+  constructor(n: number) {
+    this.p = Array.from({ length: n }, (_, i) => i);
+  }
+  find(x: number): number {
+    while (this.p[x] !== x) {
+      this.p[x] = this.p[this.p[x]];
+      x = this.p[x];
+    }
+    return x;
+  }
+  union(a: number, b: number): boolean {
+    const ra = this.find(a), rb = this.find(b);
+    if (ra === rb) return false;
+    this.p[ra] = rb;
+    return true;
+  }
+}
 
 /** Classic dot-perfboard hole pitch. */
 export const DEFAULT_PITCH_MM = 2.54;
@@ -251,6 +275,104 @@ export class BoardEngine {
 
   getTraces(): Trace[] {
     return this.state.traces.map((t) => ({ ...t, path: t.path.map((h) => ({ ...h })) }));
+  }
+
+  // ---- netlist import ----
+
+  /**
+   * Instantiate components + nets from a parsed KiCad netlist. Known footprints
+   * map to the library; unknown ones get a generic part with the netlist's own
+   * pin names. Components are auto-placed in a simple flow layout for the user to
+   * rearrange. Returns a summary.
+   */
+  loadNetlist(parsed: ParsedNetlist): { added: number; generic: string[] } {
+    // Pin names per ref, as they appear in the netlist (for generic fallback).
+    const pinsByRef = new Map<string, string[]>();
+    for (const net of parsed.nets) {
+      for (const node of net.nodes) {
+        const arr = pinsByRef.get(node.ref) ?? [];
+        if (!arr.includes(node.pin)) arr.push(node.pin);
+        pinsByRef.set(node.ref, arr);
+      }
+    }
+
+    const generic: string[] = [];
+    let cx = 0, cy = 0, rowH = 0;
+
+    for (const comp of parsed.components) {
+      let fpName = mapKicadFootprint(comp.footprint);
+      if (!fpName || !this.footprints.has(fpName)) {
+        const names = pinsByRef.get(comp.ref) ?? ["1"];
+        const genName = `GEN_${comp.ref}`;
+        const pins: PinDef[] = names.map((n, i) => ({ num: n, col: i, row: 0 }));
+        this.registerFootprint({ name: genName, pins, body: { w: names.length, h: 1, height: 6 } });
+        fpName = genName;
+        generic.push(comp.ref);
+      }
+      const fp = this.footprints.get(fpName)!;
+      if (cx + fp.body.w > this.cols) {
+        cx = 0;
+        cy += rowH + 1;
+        rowH = 0;
+      }
+      this.addComponent({ footprint: fpName, ref: comp.ref, value: comp.value, anchor: { col: cx, row: cy } });
+      cx += fp.body.w + 1;
+      rowH = Math.max(rowH, fp.body.h);
+    }
+
+    this.setNets(parsed.nets.map((n) => ({ name: n.name, pins: n.nodes.map((x) => ({ ref: x.ref, pin: x.pin })) })));
+    return { added: parsed.components.length, generic };
+  }
+
+  /**
+   * Airwires (ratsnest): the still-unrouted connections. Per net, the minimal set
+   * of links needed to join its pins, skipping pairs already connected through a
+   * shared hole or an existing trace.
+   */
+  ratsnest(): Airwire[] {
+    const pins = this.allPins();
+    const key = (c: HoleCoord) => `${c.col},${c.row}`;
+    const pinKey = new Map<string, number>();
+    const byCoord = new Map<string, number[]>();
+    pins.forEach((p, i) => {
+      pinKey.set(`${p.ref}/${p.pin}`, i);
+      const k = key(p.coord);
+      const arr = byCoord.get(k) ?? [];
+      arr.push(i);
+      byCoord.set(k, arr);
+    });
+
+    const uf = new UnionFind(pins.length);
+    // pins sharing a hole are the same node
+    for (const arr of byCoord.values()) for (let i = 1; i < arr.length; i++) uf.union(arr[0], arr[i]);
+    // pins joined by an existing trace
+    for (const t of this.state.traces) {
+      const onPath = new Set(t.path.map(key));
+      const hit = pins.map((p, i) => (onPath.has(key(p.coord)) ? i : -1)).filter((i) => i >= 0);
+      for (let i = 1; i < hit.length; i++) uf.union(hit[0], hit[i]);
+    }
+
+    const wires: Airwire[] = [];
+    for (const net of this.state.nets) {
+      const idx = net.pins
+        .map((p) => pinKey.get(`${p.ref}/${p.pin}`))
+        .filter((i): i is number => i !== undefined);
+      if (idx.length < 2) continue;
+      // Kruskal over this net's pins using the shared union-find.
+      const edges: { a: number; b: number; d: number }[] = [];
+      for (let i = 0; i < idx.length; i++)
+        for (let j = i + 1; j < idx.length; j++) {
+          const a = pins[idx[i]].coord, b = pins[idx[j]].coord;
+          edges.push({ a: idx[i], b: idx[j], d: Math.abs(a.col - b.col) + Math.abs(a.row - b.row) });
+        }
+      edges.sort((x, y) => x.d - y.d);
+      for (const e of edges) {
+        if (uf.union(e.a, e.b)) {
+          wires.push({ net: net.name, a: { ...pins[e.a].coord }, b: { ...pins[e.b].coord } });
+        }
+      }
+    }
+    return wires;
   }
 
   // ---- serialisation ----

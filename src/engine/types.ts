@@ -77,6 +77,13 @@ export interface Trace {
   path: HoleCoord[];
 }
 
+/** An unrouted connection hint between two pins of the same net. */
+export interface Airwire {
+  net: string;
+  a: HoleCoord;
+  b: HoleCoord;
+}
+
 /** Full serialisable state of a board. */
 export interface BoardState {
   config: BoardConfig;

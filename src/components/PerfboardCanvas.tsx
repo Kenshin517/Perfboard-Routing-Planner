@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
-import type { HoleCoord } from "@/engine/types";
+import type { Airwire, HoleCoord } from "@/engine/types";
 import { colToLabel, rowToLabel } from "@/engine/coordinates";
 
 const CELL_PX = 30;
@@ -23,6 +23,7 @@ interface Props {
   /** If set, the next click places this footprint (anchor at the clicked hole). */
   armedFootprint?: string | null;
   selectedId?: string | null;
+  airwires?: Airwire[];
   onSelect?: (id: string | null) => void;
   onPlace?: (footprint: string, hole: HoleCoord) => void;
   onMove?: (id: string, anchor: HoleCoord) => void;
@@ -42,6 +43,7 @@ export default function PerfboardCanvas({
   resetToken = 0,
   armedFootprint = null,
   selectedId = null,
+  airwires = [],
   onSelect,
   onPlace,
   onMove,
@@ -154,6 +156,21 @@ export default function PerfboardCanvas({
       }
     }
 
+    // Ratsnest (airwires) — drawn under components.
+    if (airwires.length) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(120,200,120,0.55)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      for (const w of airwires) {
+        ctx.beginPath();
+        ctx.moveTo(sx(w.a.col), sy(w.a.row));
+        ctx.lineTo(sx(w.b.col), sy(w.b.row));
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
     // Components.
     for (const c of engine.getComponents()) {
       const pins = engine.pinPositions(c.id);
@@ -202,7 +219,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId]);
+  }, [engine, view, size, rev, selectedId, airwires]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
