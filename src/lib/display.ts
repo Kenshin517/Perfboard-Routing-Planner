@@ -16,6 +16,12 @@ export interface Bounds {
   maxR: number;
 }
 
+/** Inclusive grid bounding box of a set of coords. Single source for the bbox formula. */
+export function boundsOf(coords: { col: number; row: number }[]): Bounds {
+  const cs = coords.map((c) => c.col), rs = coords.map((c) => c.row);
+  return { minC: Math.min(...cs), maxC: Math.max(...cs), minR: Math.min(...rs), maxR: Math.max(...rs) };
+}
+
 /**
  * Screen rectangle for a component body, computed from both corners so it's
  * correct whether or not the view is mirrored. `sx`/`sy` map grid -> pixels

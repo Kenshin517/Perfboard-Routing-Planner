@@ -70,6 +70,20 @@ describe("BoardEngine — component placement", () => {
     expect(b.pinPositions(id)).toHaveLength(1);
   });
 
+  it("tracks placed/unplaced and place() drops a part on the board", () => {
+    const b = createBoard({ cols: 20, rows: 20 });
+    const u = b.addComponent({ footprint: "DIP-8", ref: "U1", anchor: { col: 0, row: 0 }, placed: false });
+    expect(b.getUnplacedComponents().map((c) => c.id)).toEqual([u]);
+    expect(b.getPlacedComponents()).toHaveLength(0);
+    expect(b.allPins()).toHaveLength(0); // unplaced pins don't count
+
+    b.place(u, { col: 3, row: 3 });
+    expect(b.getUnplacedComponents()).toHaveLength(0);
+    expect(b.getPlacedComponents()).toHaveLength(1);
+    expect(b.getComponent(u)!.anchor).toEqual({ col: 3, row: 3 });
+    expect(b.allPins()).toHaveLength(8);
+  });
+
   it("gives each component a distinct id", () => {
     const b = createBoard({ cols: 20, rows: 20 });
     const a = b.addComponent({ footprint: "DIP-8", ref: "U1", anchor: { col: 0, row: 0 } });

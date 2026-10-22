@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { createBoard, BoardEngine } from "@/engine/BoardEngine";
 import { refPrefixFor } from "@/engine/footprints";
@@ -10,6 +10,7 @@ import { saveProject, loadProject, downloadProject, readProjectFile } from "@/st
 import { parseKicadXmlNetlist } from "@/engine/netlist";
 import { exportPdf } from "@/export/pdf";
 import { exportPng } from "@/export/png";
+import { palette } from "@/lib/theme";
 
 const Perfboard3D = dynamic(() => import("@/components/Perfboard3D"), { ssr: false });
 
@@ -28,7 +29,7 @@ export default function Home() {
   const engine = engineRef.current;
 
   const [rev, setRev] = useState(0);
-  const bump = () => setRev((r) => r + 1);
+  const bump = useCallback(() => setRev((r) => r + 1), []);
 
   const [cols, setCols] = useState(engine.cols);
   const [rows, setRows] = useState(engine.rows);
@@ -37,6 +38,9 @@ export default function Home() {
   const [selected, setSelected] = useState<string | null>(null);
   const [routing, setRouting] = useState(false);
   const [routeStart, setRouteStart] = useState<HoleCoord | null>(null);
+  const [hoverHole, setHoverHole] = useState<HoleCoord | null>(null);
+  const [pending, setPending] = useState<{ path: HoleCoord[]; net?: string } | null>(null);
+  const [placingId, setPlacingId] = useState<string | null>(null);
   const [flipped, setFlipped] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [showBuildList, setShowBuildList] = useState(false);
@@ -71,6 +75,8 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
+    // Intentionally mount-only: load the autosaved project exactly once. The
+    // helpers it calls (swapEngine/loadProject) are stable for this purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -81,8 +87,7 @@ export default function Home() {
       void saveProject(engine.serialize());
     }, 400);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rev, loaded]);
+  }, [rev, loaded, engine]);
 
   const onImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -104,9 +109,8 @@ export default function Home() {
       const res = engine.loadNetlist(parsed);
       setResetToken((t) => t + 1);
       bump();
-      if (res.generic.length) {
-        alert(`Imported ${res.added} komponen. Footprint generic (belum dikenal): ${res.generic.join(", ")} — atur manual kalau perlu.`);
-      }
+      const note = `${res.added} komponen masuk ke tray "Unplaced" — klik tiap part lalu taruh di board.`;
+      alert(res.generic.length ? `${note}\nFootprint generic (belum dikenal): ${res.generic.join(", ")}.` : note);
     } catch {
       alert("Netlist tidak valid. Export dari KiCad sebagai XML netlist ya.");
     }
@@ -115,8 +119,13 @@ export default function Home() {
   const toggleRouting = () => {
     setRouting((r) => {
       const next = !r;
-      if (next) setArmed(null);
+      if (next) {
+        setArmed(null);
+        setPlacingId(null);
+      }
       setRouteStart(null);
+      setHoverHole(null);
+      setPending(null);
       setSelected(null);
       return next;
     });
@@ -125,15 +134,37 @@ export default function Home() {
   const onRoutePick = (hole: HoleCoord) => {
     if (!routeStart) {
       setRouteStart(hole);
+      setHoverHole(null);
       return;
     }
-    const id = engine.routePadToPad(routeStart, hole);
+    const pv = engine.previewRoute(routeStart, hole);
     setRouteStart(null);
-    if (!id) alert("Gak nemu jalur antara dua titik itu.");
-    else bump();
+    setHoverHole(null);
+    if (!pv) alert("Gak nemu jalur antara dua titik itu.");
+    else setPending(pv); // wait for user approval (Spec: "user approve")
+  };
+
+  const confirmRoute = () => {
+    if (!pending) return;
+    engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net });
+    setPending(null);
+    bump();
+  };
+  const cancelRoute = () => {
+    setPending(null);
+    setRouteStart(null);
+    setHoverHole(null);
+  };
+
+  const placeExisting = (id: string, hole: HoleCoord) => {
+    engine.place(id, hole);
+    setPlacingId(null);
+    bump();
   };
 
   const clamp = (n: number) => Math.max(1, Math.min(120, Math.round(n || 1)));
+  const previewPath = routing && routeStart && hoverHole ? engine.previewRoute(routeStart, hoverHole)?.path ?? null : null;
+  const unplaced = engine.getUnplacedComponents();
   const airwires = engine.ratsnest();
   const crossPairs = engine.crossings();
   const crossingIds = Array.from(new Set(crossPairs.flatMap((p) => [p.a, p.b])));
@@ -147,10 +178,17 @@ export default function Home() {
   // Keyboard: R rotate, Delete remove, Esc disarm/deselect.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Enter" && pending) {
+        engine.addTrace(pending.path, { layer: "bottom-copper", net: pending.net });
+        setPending(null);
+        bump();
+      } else if (e.key === "Escape") {
         setArmed(null);
         setSelected(null);
         setRouteStart(null);
+        setHoverHole(null);
+        setPending(null);
+        setPlacingId(null);
         setSelectedTrace(null);
       } else if ((e.key === "Delete" || e.key === "Backspace") && selectedTrace) {
         engine.removeTrace(selectedTrace);
@@ -167,7 +205,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected, selectedTrace, engine]);
+  }, [selected, selectedTrace, pending, engine, bump]);
 
   const place = (fp: string, hole: HoleCoord) => {
     engine.addComponent({ footprint: fp, ref: nextRef(engine, refPrefixFor(fp)), anchor: hole });
@@ -180,11 +218,35 @@ export default function Home() {
     <main style={{ display: "flex", height: "100%" }}>
       {/* Palette */}
       <aside style={paletteStyle}>
+        {unplaced.length > 0 && (
+          <>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--accent)" }}>
+              Unplaced ({unplaced.length})
+            </div>
+            {unplaced.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setArmed(null);
+                  setRouting(false);
+                  setPending(null);
+                  setRouteStart(null);
+                  setPlacingId((p) => (p === c.id ? null : c.id));
+                }}
+                style={{ ...paletteBtn, ...(placingId === c.id ? paletteBtnActive : {}) }}
+                title={c.footprint}
+              >
+                {c.ref} &middot; {c.footprint}
+              </button>
+            ))}
+            <div style={{ height: 12 }} />
+          </>
+        )}
         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Components</div>
-        {engine.listFootprints().map((fp) => (
+        {engine.listFootprints().filter((fp) => !fp.name.startsWith("GEN_")).map((fp) => (
           <button
             key={fp.name}
-            onClick={() => setArmed((a) => (a === fp.name ? null : fp.name))}
+            onClick={() => { setArmed((a) => (a === fp.name ? null : fp.name)); setPlacingId(null); }}
             style={{ ...paletteBtn, ...(armed === fp.name ? paletteBtnActive : {}) }}
           >
             {fp.name}
@@ -221,6 +283,18 @@ export default function Home() {
               <button onClick={() => { engine.promoteCrossingsToJumper(); bump(); }} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
                 Jumper-kan crossings
               </button>
+            )}
+            {pending && (
+              <>
+                <span style={{ fontSize: 13, color: palette.routeStart }}>Route {pending.net ?? "?"} ({pending.path.length} holes)?</span>
+                <button onClick={confirmRoute} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Confirm (Enter)</button>
+                <button onClick={cancelRoute} style={btn}>Cancel (Esc)</button>
+              </>
+            )}
+            {placingId && (
+              <span style={{ fontSize: 13, color: "var(--accent)" }}>
+                Taruh {engine.getComponent(placingId)?.ref} di board… Esc batal
+              </span>
             )}
             <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }}>
               {routing ? "Routing…" : "Route"}
@@ -295,7 +369,12 @@ export default function Home() {
             routeStart={routeStart}
             crossingIds={crossingIds}
             selectedTraceId={selectedTrace}
+            pendingPath={pending?.path ?? null}
+            previewPath={previewPath}
+            placingComponentId={placingId}
             onRoutePick={onRoutePick}
+            onHover={setHoverHole}
+            onPlaceComponent={placeExisting}
             onSelectTrace={setSelectedTrace}
             onSelect={setSelected}
             onPlace={place}

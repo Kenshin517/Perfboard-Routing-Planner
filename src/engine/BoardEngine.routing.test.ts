@@ -28,6 +28,17 @@ describe("manual routing", () => {
     expect(b.ratsnest()).toHaveLength(0);
   });
 
+  it("previewRoute computes a path + net without committing a trace", () => {
+    const b = twoHeaderBoard();
+    const preview = b.previewRoute({ col: 0, row: 0 }, { col: 0, row: 5 })!;
+    expect(preview.net).toBe("NET1");
+    expect(preview.path[0]).toEqual({ col: 0, row: 0 });
+    expect(b.getTraces()).toHaveLength(0); // nothing committed yet (approve step)
+    // approving = committing the previewed path
+    b.addTrace(preview.path, { net: preview.net });
+    expect(b.getTraces()).toHaveLength(1);
+  });
+
   it("validates and edits traces", () => {
     const b = twoHeaderBoard();
     expect(() => b.addTrace([{ col: 0, row: 0 }])).toThrow(); // too short

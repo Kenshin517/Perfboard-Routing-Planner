@@ -56,6 +56,17 @@ describe("loadNetlist + ratsnest", () => {
     expect(b.getComponents()).toHaveLength(3);
     expect(b.getNets()).toHaveLength(2);
 
+    // Imported parts are NOT auto-placed: they sit in the tray, no airwires yet.
+    expect(b.getUnplacedComponents()).toHaveLength(3);
+    expect(b.ratsnest()).toHaveLength(0);
+
+    // Once the user places them, the ratsnest appears.
+    const ids = b.getComponents();
+    b.place(ids[0].id, { col: 0, row: 0 });
+    b.place(ids[1].id, { col: 0, row: 5 });
+    b.place(ids[2].id, { col: 0, row: 10 });
+    expect(b.getUnplacedComponents()).toHaveLength(0);
+
     // GND (3 pins) -> 2 airwires, VCC (2 pins) -> 1 airwire = 3 total.
     const rats = b.ratsnest();
     expect(rats).toHaveLength(3);
@@ -74,7 +85,8 @@ describe("loadNetlist + ratsnest", () => {
     const res = b.loadNetlist(parseKicadXmlNetlist(xml));
     expect(res.generic).toContain("Q9");
     expect(b.getFootprint("GEN_Q9")!.pins.map((p) => p.num)).toEqual(["A", "C"]);
-    // same-component net with both pins -> 1 airwire between them
+    // place it, then the same-component net with both pins -> 1 airwire
+    b.place(b.getComponents()[0].id, { col: 5, row: 5 });
     expect(b.ratsnest()).toHaveLength(1);
   });
 });

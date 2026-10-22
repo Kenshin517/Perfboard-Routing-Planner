@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import type { Airwire, HoleCoord } from "@/engine/types";
 import { colToLabel, rowToLabel } from "@/engine/coordinates";
-import { mirrorCol, screenRectFromBounds } from "@/lib/display";
+import { boundsOf, mirrorCol, screenRectFromBounds } from "@/lib/display";
 import { palette } from "@/lib/theme";
 
 const CELL_PX = 30;
@@ -44,7 +44,15 @@ interface Props {
   /** Ids of traces currently involved in a crossing (drawn red). */
   crossingIds?: string[];
   selectedTraceId?: string | null;
+  /** The proposed route awaiting the user's approval (solid highlight). */
+  pendingPath?: HoleCoord[] | null;
+  /** Live preview from the picked pad to the hovered hole (dashed). */
+  previewPath?: HoleCoord[] | null;
+  /** An unplaced component being dropped: the next click places it. */
+  placingComponentId?: string | null;
   onRoutePick?: (hole: HoleCoord) => void;
+  onHover?: (hole: HoleCoord) => void;
+  onPlaceComponent?: (id: string, hole: HoleCoord) => void;
   onSelectTrace?: (id: string | null) => void;
   onSelect?: (id: string | null) => void;
   onPlace?: (footprint: string, hole: HoleCoord) => void;
@@ -71,7 +79,12 @@ export default function PerfboardCanvas({
   routeStart = null,
   crossingIds = [],
   selectedTraceId = null,
+  pendingPath = null,
+  previewPath = null,
+  placingComponentId = null,
   onRoutePick,
+  onHover,
+  onPlaceComponent,
   onSelectTrace,
   onSelect,
   onPlace,
@@ -108,8 +121,7 @@ export default function PerfboardCanvas({
 
   useEffect(() => {
     fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [size.w, size.h, resetToken]);
+  }, [fit, resetToken]);
 
   // Map screen px -> nearest hole (flip-aware).
   const holeAt = useCallback(
@@ -123,7 +135,7 @@ export default function PerfboardCanvas({
 
   // Component bounding boxes (in holes) for hit-testing.
   const boxes = useCallback((): CompBox[] => {
-    return engine.getComponents().map((c) => ({ id: c.id, ...engine.componentBounds(c.id) }));
+    return engine.getPlacedComponents().map((c) => ({ id: c.id, ...engine.componentBounds(c.id) }));
   }, [engine]);
 
   // Continuous world coords (flip-aware) for trace hit-testing.
@@ -250,6 +262,23 @@ export default function PerfboardCanvas({
       ctx.restore();
     }
 
+    // Proposed route (awaiting approval) + live preview.
+    const drawPoly = (path: HoleCoord[], color: string, lw: number, dash: number[]) => {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = lw;
+      ctx.setLineDash(dash);
+      ctx.beginPath();
+      ctx.moveTo(sx(path[0].col), sy(path[0].row));
+      for (let i = 1; i < path.length; i++) ctx.lineTo(sx(path[i].col), sy(path[i].row));
+      ctx.stroke();
+      ctx.restore();
+    };
+    if (previewPath && previewPath.length >= 2) drawPoly(previewPath, "rgba(255,255,255,0.45)", Math.max(1.5, step * 0.12), [step * 0.25, step * 0.2]);
+    if (pendingPath && pendingPath.length >= 2) drawPoly(pendingPath, palette.routeStart, Math.max(2.5, step * 0.22), []);
+
     // Route start highlight.
     if (routing && routeStart) {
       ctx.beginPath();
@@ -259,12 +288,12 @@ export default function PerfboardCanvas({
       ctx.stroke();
     }
 
-    // Components.
-    for (const c of engine.getComponents()) {
+    // Components (placed only; one pinPositions read each, reused for bounds).
+    for (const c of engine.getPlacedComponents()) {
       const pins = engine.pinPositions(c.id);
-      const bounds = engine.componentBounds(c.id);
+      const bounds = boundsOf(pins.map((p) => p.coord));
       const { minC, maxC, minR, maxR } = bounds;
-      const fits = engine.componentFits(c.id);
+      const fits = pins.every((p) => engine.hasHole(p.coord.col, p.coord.row));
       const selected = c.id === selectedId;
 
       // body (flip-safe rect from both corners)
@@ -305,7 +334,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
@@ -315,6 +344,10 @@ export default function PerfboardCanvas({
 
     if (routing) {
       if (engine.hasHole(hole.col, hole.row)) onRoutePick?.(hole);
+      return;
+    }
+    if (placingComponentId) {
+      if (engine.hasHole(hole.col, hole.row)) onPlaceComponent?.(placingComponentId, hole);
       return;
     }
     if (armedFootprint) {
@@ -341,6 +374,11 @@ export default function PerfboardCanvas({
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
+    if (routing && routeStart) {
+      const rect = canvasRef.current!.getBoundingClientRect();
+      onHover?.(holeAt(e.clientX - rect.left, e.clientY - rect.top));
+      return;
+    }
     if (compDrag.current) {
       const rect = canvasRef.current!.getBoundingClientRect();
       const hole = holeAt(e.clientX - rect.left, e.clientY - rect.top);
@@ -372,7 +410,7 @@ export default function PerfboardCanvas({
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: routing ? "crosshair" : armedFootprint ? "copy" : "grab" }}
+      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: routing ? "crosshair" : armedFootprint || placingComponentId ? "copy" : "grab" }}
     >
       <canvas
         ref={canvasRef}

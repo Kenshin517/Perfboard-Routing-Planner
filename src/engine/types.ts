@@ -56,9 +56,15 @@ export interface PlacedComponent {
   /** Reference designator, e.g. "U1", "R3". */
   ref: string;
   value?: string;
-  /** Grid hole the footprint's (0,0) offset lands on. */
+  /** Grid hole the footprint's (0,0) offset lands on (meaningful only when placed). */
   anchor: HoleCoord;
   rotation: Rotation;
+  /**
+   * Whether the component has been placed on the board. Imported-from-netlist
+   * parts start false (manual placement is required — the spec keeps auto-
+   * placement out of scope) and are shown in a tray until the user drops them.
+   */
+  placed: boolean;
 }
 
 /** A net from the imported netlist: a set of pins that must be connected. */

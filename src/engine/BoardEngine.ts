@@ -19,6 +19,7 @@ import type {
   Trace,
 } from "./types";
 import { coordToLabel } from "./coordinates";
+import { boundsOf, type Bounds } from "@/lib/display";
 import { DEFAULT_FOOTPRINTS, makeGenericFootprint, rotateOffset } from "./footprints";
 import { mapKicadFootprint, type ParsedNetlist } from "./netlist";
 import { findPath } from "./router";
@@ -75,6 +76,8 @@ export interface AddComponentInput {
   value?: string;
   anchor: HoleCoord;
   rotation?: Rotation;
+  /** Defaults to true. Netlist import passes false (part lands in the tray). */
+  placed?: boolean;
 }
 
 /** Factory: build a fresh board. */
@@ -109,7 +112,7 @@ export class BoardEngine {
     }
     this.state = {
       config: { ...config },
-      components: state.components ? state.components.map((c) => ({ ...c })) : [],
+      components: state.components ? state.components.map((c) => ({ ...c, placed: c.placed ?? true })) : [],
       traces: state.traces ? state.traces.map((t) => ({ ...t })) : [],
       nets: state.nets ? state.nets.map((n) => ({ ...n })) : [],
     };
@@ -206,12 +209,30 @@ export class BoardEngine {
       value: input.value,
       anchor: { ...input.anchor },
       rotation: input.rotation ?? 0,
+      placed: input.placed ?? true,
     });
     return id;
   }
 
   getComponents(): PlacedComponent[] {
     return this.state.components.map((c) => ({ ...c }));
+  }
+
+  /** Components actually on the board (what every renderer and the router use). */
+  getPlacedComponents(): PlacedComponent[] {
+    return this.state.components.filter((c) => c.placed).map((c) => ({ ...c }));
+  }
+
+  /** Imported-but-not-yet-placed components (shown in the tray). */
+  getUnplacedComponents(): PlacedComponent[] {
+    return this.state.components.filter((c) => !c.placed).map((c) => ({ ...c }));
+  }
+
+  /** Drop an unplaced (or placed) component onto the board at an anchor. */
+  place(id: string, anchor: HoleCoord): void {
+    const c = this.mustComponent(id);
+    c.anchor = { ...anchor };
+    c.placed = true;
   }
 
   getComponent(id: string): PlacedComponent | undefined {
@@ -268,15 +289,13 @@ export class BoardEngine {
   }
 
   /** Grid bounding box (inclusive) of a component's pins. Shared by every renderer. */
-  componentBounds(id: string): { minC: number; maxC: number; minR: number; maxR: number } {
-    const pins = this.pinPositions(id).map((p) => p.coord);
-    const cs = pins.map((p) => p.col), rs = pins.map((p) => p.row);
-    return { minC: Math.min(...cs), maxC: Math.max(...cs), minR: Math.min(...rs), maxR: Math.max(...rs) };
+  componentBounds(id: string): Bounds {
+    return boundsOf(this.pinPositions(id).map((p) => p.coord));
   }
 
-  /** Every pin of every component, resolved to absolute positions. */
+  /** Every pin of every PLACED component, resolved to absolute positions. */
   allPins(): ResolvedPin[] {
-    return this.state.components.flatMap((c) => this.pinPositions(c.id));
+    return this.state.components.filter((c) => c.placed).flatMap((c) => this.pinPositions(c.id));
   }
 
   // ---- nets & traces (used by later tickets; included here for serialisation) ----
@@ -313,7 +332,6 @@ export class BoardEngine {
     }
 
     const generic: string[] = [];
-    let cx = 0, cy = 0, rowH = 0;
 
     for (const comp of parsed.components) {
       let fpName = mapKicadFootprint(comp.footprint);
@@ -325,15 +343,9 @@ export class BoardEngine {
         fpName = genName;
         generic.push(comp.ref);
       }
-      const fp = this.footprints.get(fpName)!;
-      if (cx + fp.body.w > this.cols) {
-        cx = 0;
-        cy += rowH + 1;
-        rowH = 0;
-      }
-      this.addComponent({ footprint: fpName, ref: comp.ref, value: comp.value, anchor: { col: cx, row: cy } });
-      cx += fp.body.w + 1;
-      rowH = Math.max(rowH, fp.body.h);
+      // Imported parts are NOT auto-placed (spec: placement manual). They land
+      // in the tray; the user drops them. anchor here is just a placeholder.
+      this.addComponent({ footprint: fpName, ref: comp.ref, value: comp.value, anchor: { col: 0, row: 0 }, placed: false });
     }
 
     this.setNets(parsed.nets.map((n) => ({ name: n.name, pins: n.nodes.map((x) => ({ ref: x.ref, pin: x.pin })) })));
@@ -431,15 +443,26 @@ export class BoardEngine {
   }
 
   /**
+   * Compute (but DON'T commit) the A* path between two holes, with the net it
+   * would carry. Used to show a proposed route the user can approve. Null if no
+   * path exists.
+   */
+  previewRoute(a: HoleCoord, b: HoleCoord, opts: RouteOptions = {}): { path: HoleCoord[]; net?: string } | null {
+    const path = findPath(a, b, { cols: this.cols, rows: this.rows, isBlocked: opts.isBlocked });
+    if (!path) return null;
+    const na = this.netAt(a), nb = this.netAt(b);
+    return { path, net: na && na === nb ? na : undefined };
+  }
+
+  /**
    * Route a connection between two holes with A*, add it as a trace.
    * The net is auto-detected when both ends belong to the same net.
    * Returns the trace id, or null if no path exists.
    */
   routePadToPad(a: HoleCoord, b: HoleCoord, opts: RouteOptions = {}): string | null {
-    const path = findPath(a, b, { cols: this.cols, rows: this.rows, isBlocked: opts.isBlocked });
-    if (!path) return null;
-    const na = this.netAt(a), nb = this.netAt(b);
-    return this.addTrace(path, { layer: opts.layer ?? "bottom-copper", net: na && na === nb ? na : undefined });
+    const preview = this.previewRoute(a, b, opts);
+    if (!preview) return null;
+    return this.addTrace(preview.path, { layer: opts.layer ?? "bottom-copper", net: preview.net });
   }
 
   removeTrace(id: string): void {
@@ -571,12 +594,10 @@ export class BoardEngine {
 
     const lines: string[] = [];
     lines.push("PLACEMENT");
-    const comps = this.getComponents().sort((a, b) => natCmp(a.ref, b.ref));
-    if (comps.length === 0) lines.push("  (belum ada komponen)");
+    const comps = this.getPlacedComponents().sort((a, b) => natCmp(a.ref, b.ref));
+    if (comps.length === 0) lines.push("  (belum ada komponen di board)");
     for (const c of comps) {
-      const pins = this.pinPositions(c.id).map((p) => p.coord);
-      const minC = Math.min(...pins.map((p) => p.col)), maxC = Math.max(...pins.map((p) => p.col));
-      const minR = Math.min(...pins.map((p) => p.row)), maxR = Math.max(...pins.map((p) => p.row));
+      const { minC, maxC, minR, maxR } = this.componentBounds(c.id);
       const range =
         minC === maxC && minR === maxR
           ? label({ col: minC, row: minR })
@@ -586,6 +607,8 @@ export class BoardEngine {
       const fit = this.componentFits(c.id) ? "" : "  [OFF-BOARD]";
       lines.push(`  ${c.ref} (${c.footprint})${val} -> ${range}${rot}${fit}`);
     }
+    const unplaced = this.getUnplacedComponents();
+    if (unplaced.length) lines.push(`  (${unplaced.length} belum ditaruh: ${unplaced.map((c) => c.ref).join(", ")})`);
 
     lines.push("");
     lines.push("CONNECTIONS");
