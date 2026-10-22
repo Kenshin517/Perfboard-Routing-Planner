@@ -33,6 +33,27 @@ describe("engine crossing detection", () => {
     expect(b.crossings()).toHaveLength(0);
   });
 
+  it("treats unnamed wires meeting at a hole as a junction, not a crossing", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    b.addTrace([{ col: 0, row: 0 }, { col: 3, row: 0 }]); // no net
+    b.addTrace([{ col: 3, row: 0 }, { col: 3, row: 3 }]); // no net, meets the first at (3,0)
+    expect(b.crossings()).toHaveLength(0); // chaining a wire is fine
+  });
+
+  it("still flags a proper mid-cell crossing of unnamed wires", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    b.addTrace([{ col: 0, row: 0 }, { col: 4, row: 4 }]);
+    b.addTrace([{ col: 0, row: 4 }, { col: 4, row: 0 }]); // crosses the first at (2,2), between holes
+    expect(b.crossings()).toHaveLength(1);
+  });
+
+  it("flags two different NAMED nets that touch at a pad (real short)", () => {
+    const b = createBoard({ cols: 10, rows: 10 });
+    b.addTrace([{ col: 0, row: 0 }, { col: 3, row: 0 }], { net: "A" });
+    b.addTrace([{ col: 3, row: 0 }, { col: 3, row: 3 }], { net: "B" }); // two nets on pad (3,0)
+    expect(b.crossings()).toHaveLength(1);
+  });
+
   it("clears the crossing when one trace moves to the jumper layer", () => {
     const b = crossingBoard("A", "B");
     const promoted = b.promoteCrossingsToJumper();

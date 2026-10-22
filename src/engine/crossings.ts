@@ -44,3 +44,26 @@ export function pathsIntersect(a: HoleCoord[], b: HoleCoord[]): boolean {
   }
   return false;
 }
+
+/**
+ * True only if two segments PROPERLY cross — each straddles the other, so they
+ * meet strictly between their holes. Touching at a shared hole or overlapping
+ * along a line does NOT count (those are solder junctions, not shorts).
+ */
+function segmentsProperlyCross(p1: HoleCoord, p2: HoleCoord, p3: HoleCoord, p4: HoleCoord): boolean {
+  const o1 = Math.sign((p2.col - p1.col) * (p3.row - p1.row) - (p2.row - p1.row) * (p3.col - p1.col));
+  const o2 = Math.sign((p2.col - p1.col) * (p4.row - p1.row) - (p2.row - p1.row) * (p4.col - p1.col));
+  const o3 = Math.sign((p4.col - p3.col) * (p1.row - p3.row) - (p4.row - p3.row) * (p1.col - p3.col));
+  const o4 = Math.sign((p4.col - p3.col) * (p2.row - p3.row) - (p4.row - p3.row) * (p2.col - p3.col));
+  return o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0 && o1 !== o2 && o3 !== o4;
+}
+
+/** True if path A properly crosses path B between holes (not just meeting at a hole). */
+export function pathsProperlyCross(a: HoleCoord[], b: HoleCoord[]): boolean {
+  for (let i = 0; i + 1 < a.length; i++) {
+    for (let j = 0; j + 1 < b.length; j++) {
+      if (segmentsProperlyCross(a[i], a[i + 1], b[j], b[j + 1])) return true;
+    }
+  }
+  return false;
+}

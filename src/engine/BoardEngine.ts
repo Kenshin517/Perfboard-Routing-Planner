@@ -23,7 +23,7 @@ import { boundsOf, type Bounds } from "@/lib/display";
 import { DEFAULT_FOOTPRINTS, makeGenericFootprint, rotateOffset } from "./footprints";
 import { mapKicadFootprint, type ParsedNetlist } from "./netlist";
 import { findPath } from "./router";
-import { pathsIntersect } from "./crossings";
+import { pathsIntersect, pathsProperlyCross } from "./crossings";
 
 export interface RouteOptions {
   layer?: Layer;
@@ -548,12 +548,19 @@ export class BoardEngine {
    */
   crossings(): { a: string; b: string }[] {
     const bare = this.state.traces.filter((t) => t.layer === "bottom-copper");
-    const netKey = (t: Trace) => t.net ?? `__trace_${t.id}`;
     const out: { a: string; b: string }[] = [];
     for (let i = 0; i < bare.length; i++) {
       for (let j = i + 1; j < bare.length; j++) {
-        if (netKey(bare[i]) === netKey(bare[j])) continue; // same net = junction, fine
-        if (pathsIntersect(bare[i].path, bare[j].path)) out.push({ a: bare[i].id, b: bare[j].id });
+        const ni = bare[i].net, nj = bare[j].net;
+        if (ni !== undefined && ni === nj) continue; // same defined net = junction
+        const bothDefined = ni !== undefined && nj !== undefined;
+        // Two different NETS that touch anywhere is a short. Otherwise (at least
+        // one unnamed manual wire) only a PROPER mid-cell crossing is a short;
+        // meeting at a hole is a solder junction, not a crossing.
+        const conflict = bothDefined
+          ? pathsIntersect(bare[i].path, bare[j].path)
+          : pathsProperlyCross(bare[i].path, bare[j].path);
+        if (conflict) out.push({ a: bare[i].id, b: bare[j].id });
       }
     }
     return out;
