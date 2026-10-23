@@ -99,6 +99,12 @@ e2e/            # Playwright smoke test
 **Stack:** Next.js 14 · TypeScript · Canvas 2D · three.js (3D, lazy) · jsPDF (lazy) ·
 Vitest · ESLint · Playwright · no backend (semua client-side).
 
+## 🌐 Deploy
+
+App statis (`output: export`) — `npm run build` menghasilkan folder `out/` yang
+di-serve nginx tanpa Node runtime. Panduan lengkap (nginx, HTTPS, catatan Oracle
+free-tier) ada di [`docs/deploy.md`](./docs/deploy.md).
+
 ## 🤝 Berkontribusi
 
 Baca [`CONTRIBUTING.md`](./CONTRIBUTING.md). Singkatnya: bikin branch `feat/...` dari

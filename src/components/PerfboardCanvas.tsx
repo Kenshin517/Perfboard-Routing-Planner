@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import type { Airwire, HoleCoord } from "@/engine/types";
-import { colToLabel, rowToLabel } from "@/engine/coordinates";
+import { colToLabel, rowToLabel, coordToLabel } from "@/engine/coordinates";
 import { boundsOf, mirrorCol, screenRectFromBounds } from "@/lib/display";
 import { palette } from "@/lib/theme";
 
@@ -112,6 +112,10 @@ export default function PerfboardCanvas({
   const [view, setView] = useState<ViewState>({ scale: 1, offsetX: 0, offsetY: 0 });
   const pan = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const compDrag = useRef<{ id: string; dc: number; dr: number; moved: boolean } | null>(null);
+  // Pad under the cursor (for the ref.pin — net tooltip), with its screen position.
+  const [hoverPin, setHoverPin] = useState<{ coord: HoleCoord; label: string; sxp: number; syp: number } | null>(null);
+  // Hole coordinate under the cursor, for the coordinate HUD (e.g. "H7").
+  const [hoverCoord, setHoverCoord] = useState<HoleCoord | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -212,9 +216,28 @@ export default function PerfboardCanvas({
     const padR = Math.max(1.5, step * 0.34);
     const holeR = Math.max(0.6, step * 0.15);
 
-    // Holes.
+    // Faint grid lines through the holes (EasyEDA-style alignment aid).
+    if (step >= 10) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let col = 0; col < engine.cols; col++) {
+        ctx.moveTo(sx(col), sy(0));
+        ctx.lineTo(sx(col), sy(engine.rows - 1));
+      }
+      for (let row = 0; row < engine.rows; row++) {
+        ctx.moveTo(sx(0), sy(row));
+        ctx.lineTo(sx(engine.cols - 1), sy(row));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Holes (skip the ones consumed by a mounting hole).
     for (let row = 0; row < engine.rows; row++) {
       for (let col = 0; col < engine.cols; col++) {
+        if (engine.isMountingBlocked(col, row)) continue;
         ctx.beginPath();
         ctx.arc(sx(col), sy(row), padR, 0, Math.PI * 2);
         ctx.fillStyle = palette.pad;
@@ -224,6 +247,19 @@ export default function PerfboardCanvas({
         ctx.fillStyle = palette.hole;
         ctx.fill();
       }
+    }
+
+    // Mounting holes — big non-plated holes (white ring) at the corners.
+    for (const m of engine.getMountingHoles()) {
+      const mx = sx(m.col), my = sy(m.row);
+      ctx.beginPath();
+      ctx.arc(mx, my, step * 0.6, 0, Math.PI * 2);
+      ctx.fillStyle = "#e8e8ea";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(mx, my, step * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = palette.bg;
+      ctx.fill();
     }
 
     // Ratsnest (airwires) — drawn under components. While routing a net, that
@@ -336,9 +372,9 @@ export default function PerfboardCanvas({
       const fits = pins.every((p) => engine.hasHole(p.coord.col, p.coord.row));
       const selected = c.id === selectedId;
 
-      // body (flip-safe rect from both corners)
+      // body — semi-transparent so the pads/legs underneath stay visible
       const r = screenRectFromBounds(bounds, sx, sy, step * 0.45);
-      ctx.fillStyle = fits ? "rgba(78,161,255,0.14)" : "rgba(255,90,90,0.18)";
+      ctx.fillStyle = fits ? "rgba(78,161,255,0.10)" : "rgba(255,90,90,0.12)";
       ctx.strokeStyle = selected ? palette.accent : fits ? "rgba(78,161,255,0.5)" : "rgba(255,90,90,0.7)";
       ctx.lineWidth = selected ? 2 : 1;
       ctx.beginPath();
@@ -346,22 +382,46 @@ export default function PerfboardCanvas({
       ctx.fill();
       ctx.stroke();
 
-      // pins
+      // pads — copper ring + dark hole, clearly a pin (not an empty hole)
+      const padOuter = Math.max(2, step * 0.3);
       for (const p of pins) {
+        const px = sx(p.coord.col), py = sy(p.coord.row);
         ctx.beginPath();
-        ctx.arc(sx(p.coord.col), sy(p.coord.row), Math.max(1.5, step * 0.22), 0, Math.PI * 2);
-        ctx.fillStyle = fits ? palette.accent : palette.danger;
+        ctx.arc(px, py, padOuter, 0, Math.PI * 2);
+        ctx.fillStyle = fits ? "#d9a441" : palette.danger; // copper
         ctx.fill();
+        ctx.beginPath();
+        ctx.arc(px, py, padOuter * 0.42, 0, Math.PI * 2);
+        ctx.fillStyle = palette.hole;
+        ctx.fill();
+        // pin number when zoomed in enough (or when hovered, handled below)
+        if (step >= 22) {
+          ctx.fillStyle = palette.text;
+          ctx.font = `${Math.min(11, step * 0.3)}px ui-sans-serif, system-ui, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(p.pin, px, py - padOuter - step * 0.18);
+        }
       }
 
-      // ref label
+      // ref label (top-left of the body so it doesn't cover the pads)
       if (step >= 12) {
         ctx.fillStyle = palette.text;
-        ctx.font = `${Math.min(14, step * 0.4)}px ui-sans-serif, system-ui, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(c.ref, sx((minC + maxC) / 2), sy((minR + maxR) / 2));
+        ctx.font = `${Math.min(13, step * 0.36)}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.textAlign = "left";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(c.ref, r.x + 1, r.y - 2);
       }
+    }
+
+    // Hovered pad highlight (tooltip text is an HTML overlay in the page).
+    if (hoverPin) {
+      const px = sx(hoverPin.coord.col), py = sy(hoverPin.coord.row);
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(3, step * 0.42), 0, Math.PI * 2);
+      ctx.strokeStyle = palette.accent;
+      ctx.lineWidth = 2;
+      ctx.stroke();
     }
 
     // Axis labels.
@@ -374,7 +434,7 @@ export default function PerfboardCanvas({
       ctx.textAlign = "right";
       for (let row = 0; row < engine.rows; row++) ctx.fillText(rowToLabel(row), sx(0) - step * 0.7, sy(row));
     }
-  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath, drawWaypoints, routeNet, routeTargets]);
+  }, [engine, view, size, rev, selectedId, airwires, flipped, routing, routeStart, crossingIds, selectedTraceId, pendingPath, previewPath, drawPath, drawWaypoints, routeNet, routeTargets, hoverPin]);
 
   // Interaction.
   const onMouseDown = (e: React.MouseEvent) => {
@@ -431,12 +491,33 @@ export default function PerfboardCanvas({
       return;
     }
     const p = pan.current;
-    if (p) setView((v) => ({ ...v, offsetX: p.ox + (e.clientX - p.x), offsetY: p.oy + (e.clientY - p.y) }));
+    if (p) {
+      setView((v) => ({ ...v, offsetX: p.ox + (e.clientX - p.x), offsetY: p.oy + (e.clientY - p.y) }));
+      return;
+    }
+    // Hover a pad → tooltip "ref.pin — net"; also track hole for the HUD.
+    const rect = canvasRef.current!.getBoundingClientRect();
+    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const hole = holeAt(px, py);
+    setHoverCoord(engine.hasHole(hole.col, hole.row) ? hole : null);
+    const pin = engine.pinAt(hole);
+    if (pin) {
+      const net = engine.netAt(hole);
+      setHoverPin({ coord: pin.coord, label: `${pin.ref}.${pin.pin}${net ? ` — ${net}` : ""}`, sxp: px, syp: py });
+    } else if (hoverPin) {
+      setHoverPin(null);
+    }
   };
 
   const endDrag = () => {
     pan.current = null;
     compDrag.current = null;
+  };
+
+  const onLeave = () => {
+    endDrag();
+    setHoverPin(null);
+    setHoverCoord(null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -454,7 +535,7 @@ export default function PerfboardCanvas({
   return (
     <div
       ref={containerRef}
-      style={{ width: "100%", height: "100%", overflow: "hidden", cursor: routing ? "crosshair" : armedFootprint || placingComponentId ? "copy" : "grab" }}
+      style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden", cursor: routing ? "crosshair" : armedFootprint || placingComponentId ? "copy" : "grab" }}
     >
       <canvas
         ref={canvasRef}
@@ -462,10 +543,50 @@ export default function PerfboardCanvas({
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={endDrag}
-        onMouseLeave={endDrag}
+        onMouseLeave={onLeave}
         onDoubleClick={() => { if (routing) onRouteFinish?.(); }}
         onWheel={onWheel}
       />
+      {hoverCoord && (
+        <div
+          style={{
+            position: "absolute",
+            left: 8,
+            bottom: 8,
+            padding: "2px 8px",
+            background: "rgba(20,24,30,0.9)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            fontSize: 12,
+            fontFamily: "ui-monospace, Menlo, monospace",
+            color: "var(--muted)",
+            pointerEvents: "none",
+            zIndex: 5,
+          }}
+        >
+          {coordToLabel(hoverCoord)}
+        </div>
+      )}
+      {hoverPin && (
+        <div
+          style={{
+            position: "absolute",
+            left: hoverPin.sxp + 12,
+            top: hoverPin.syp + 12,
+            padding: "3px 7px",
+            background: "rgba(20,24,30,0.95)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            fontSize: 12,
+            color: "var(--text)",
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+            zIndex: 5,
+          }}
+        >
+          {hoverPin.label}
+        </div>
+      )}
     </div>
   );
 }

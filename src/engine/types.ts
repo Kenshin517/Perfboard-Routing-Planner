@@ -6,6 +6,12 @@
  * layer. See the spec: "Model board & koordinat".
  */
 
+/** A mounting-hole centre, in (possibly fractional) hole units. */
+export interface MountingHole {
+  col: number;
+  row: number;
+}
+
 /** Physical configuration of a dot-perfboard. */
 export interface BoardConfig {
   /** Number of hole columns (x), left to right. */
@@ -14,6 +20,12 @@ export interface BoardConfig {
   rows: number;
   /** Centre-to-centre hole spacing in millimetres (classic perfboard = 2.54). */
   pitchMm: number;
+  /**
+   * Screw/mounting holes (non-plated). Each centre sits between pads and makes
+   * the surrounding integer holes unusable (no component, no trace). Optional;
+   * absent = plain board.
+   */
+  mounting?: MountingHole[];
 }
 
 /** A single hole position on the grid, 0-based. */
