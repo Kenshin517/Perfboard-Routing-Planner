@@ -15,7 +15,8 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: "npm run build && npm run start",
+    // Static export has no Node server; build then serve out/ statically.
+    command: "npm run build && npx --yes serve out -l 3000",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
