@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardEngine } from "@/engine/BoardEngine";
 import type { Airwire, HoleCoord } from "@/engine/types";
-import { colToLabel, rowToLabel } from "@/engine/coordinates";
+import { colToLabel, rowToLabel, coordToLabel } from "@/engine/coordinates";
 import { boundsOf, mirrorCol, screenRectFromBounds } from "@/lib/display";
 import { palette } from "@/lib/theme";
 
@@ -114,6 +114,8 @@ export default function PerfboardCanvas({
   const compDrag = useRef<{ id: string; dc: number; dr: number; moved: boolean } | null>(null);
   // Pad under the cursor (for the ref.pin — net tooltip), with its screen position.
   const [hoverPin, setHoverPin] = useState<{ coord: HoleCoord; label: string; sxp: number; syp: number } | null>(null);
+  // Hole coordinate under the cursor, for the coordinate HUD (e.g. "H7").
+  const [hoverCoord, setHoverCoord] = useState<HoleCoord | null>(null);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -213,6 +215,24 @@ export default function PerfboardCanvas({
     const step = CELL_PX * scale;
     const padR = Math.max(1.5, step * 0.34);
     const holeR = Math.max(0.6, step * 0.15);
+
+    // Faint grid lines through the holes (EasyEDA-style alignment aid).
+    if (step >= 10) {
+      ctx.save();
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let col = 0; col < engine.cols; col++) {
+        ctx.moveTo(sx(col), sy(0));
+        ctx.lineTo(sx(col), sy(engine.rows - 1));
+      }
+      for (let row = 0; row < engine.rows; row++) {
+        ctx.moveTo(sx(0), sy(row));
+        ctx.lineTo(sx(engine.cols - 1), sy(row));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
 
     // Holes (skip the ones consumed by a mounting hole).
     for (let row = 0; row < engine.rows; row++) {
@@ -475,10 +495,11 @@ export default function PerfboardCanvas({
       setView((v) => ({ ...v, offsetX: p.ox + (e.clientX - p.x), offsetY: p.oy + (e.clientY - p.y) }));
       return;
     }
-    // Hover a pad → tooltip "ref.pin — net".
+    // Hover a pad → tooltip "ref.pin — net"; also track hole for the HUD.
     const rect = canvasRef.current!.getBoundingClientRect();
     const px = e.clientX - rect.left, py = e.clientY - rect.top;
     const hole = holeAt(px, py);
+    setHoverCoord(engine.hasHole(hole.col, hole.row) ? hole : null);
     const pin = engine.pinAt(hole);
     if (pin) {
       const net = engine.netAt(hole);
@@ -496,6 +517,7 @@ export default function PerfboardCanvas({
   const onLeave = () => {
     endDrag();
     setHoverPin(null);
+    setHoverCoord(null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -525,6 +547,26 @@ export default function PerfboardCanvas({
         onDoubleClick={() => { if (routing) onRouteFinish?.(); }}
         onWheel={onWheel}
       />
+      {hoverCoord && (
+        <div
+          style={{
+            position: "absolute",
+            left: 8,
+            bottom: 8,
+            padding: "2px 8px",
+            background: "rgba(20,24,30,0.9)",
+            border: "1px solid var(--border)",
+            borderRadius: 5,
+            fontSize: 12,
+            fontFamily: "ui-monospace, Menlo, monospace",
+            color: "var(--muted)",
+            pointerEvents: "none",
+            zIndex: 5,
+          }}
+        >
+          {coordToLabel(hoverCoord)}
+        </div>
+      )}
       {hoverPin && (
         <div
           style={{

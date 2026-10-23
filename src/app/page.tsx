@@ -329,92 +329,76 @@ export default function Home() {
           <span style={{ color: "var(--muted)", fontSize: 13 }}>
             {engine.cols} × {engine.rows} &middot; {engine.getComponents().length} parts
           </span>
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              {airwires.length} airwire{airwires.length === 1 ? "" : "s"} &middot; {counts.jumpers} jumper{counts.jumpers === 1 ? "" : "s"} &middot;{" "}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+            {/* status */}
+            <span style={{ fontSize: 12, color: "var(--muted)", marginRight: 2 }}>
+              {airwires.length}✈ · {counts.jumpers}⤴ ·{" "}
               <span style={{ color: counts.bottomCrossings ? "#ff5a5a" : "var(--muted)", fontWeight: counts.bottomCrossings ? 600 : 400 }}>
-                {counts.bottomCrossings} crossing{counts.bottomCrossings === 1 ? "" : "s"}
+                {counts.bottomCrossings}✕
               </span>
             </span>
-            <button onClick={() => { mutate(() => engine.autoroute()); setSelectedTrace(null); }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }}>
-              Autoroute
-            </button>
-            {counts.traces > 0 && (
-              <button onClick={() => { mutate(() => engine.clearTraces()); setSelectedTrace(null); }} style={btn}>Clear routing</button>
-            )}
-            {counts.bottomCrossings > 0 && (
-              <button onClick={() => mutate(() => engine.promoteCrossingsToJumper())} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>
-                Jumper-kan crossings
-              </button>
-            )}
+
+            {/* context: routing / placing */}
             {placingId && (
-              <span style={{ fontSize: 13, color: "var(--accent)" }}>
-                Taruh {engine.getComponent(placingId)?.ref} di board… Esc batal
-              </span>
+              <span style={{ fontSize: 12, color: "var(--accent)" }}>Taruh {engine.getComponent(placingId)?.ref}… Esc</span>
             )}
-            <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }} title="Klik lubang demi lubang; Enter / double-click = selesai">
-              {routing ? "Routing…" : "Route"}
-            </button>
             {routing && drawPath.length > 0 && (
               <>
-                <span style={{ fontSize: 13, color: palette.routeStart }}>
-                  {routeNet ? `net ${routeNet}` : "(no net)"} · {drawPath.length} holes
-                </span>
-                <button onClick={finishFreeDraw} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }}>Finish (Enter)</button>
-                <button onClick={() => setDrawPath([])} style={btn}>Cancel (Esc)</button>
+                <span style={{ fontSize: 12, color: palette.routeStart }}>{routeNet ? routeNet : "no net"} · {drawPath.length}</span>
+                <button onClick={finishFreeDraw} style={{ ...btn, borderColor: palette.routeStart, color: palette.routeStart }} title="Selesai (Enter)">Finish</button>
+                <button onClick={() => setDrawPath([])} style={btn} title="Batal (Esc)">✕</button>
               </>
             )}
-            <button onClick={doFlip} style={{ ...btn, ...(flipped ? activeBtn : {}) }}>
-              {flipped ? "Bottom view" : "Top view"}
-            </button>
-            <button onClick={() => setMode3d((v) => !v)} style={{ ...btn, ...(mode3d ? activeBtn : {}) }}>
-              {mode3d ? "3D" : "2D"}
-            </button>
-            <span style={{ width: 1, height: 20, background: "var(--border)" }} />
-            {selTrace && (
-              <>
-                <span style={{ fontSize: 13, color: "var(--accent)" }}>
-                  trace {selTrace.net ?? "(no net)"} / {selTrace.layer}
-                </span>
-                <button onClick={() => mutate(() => engine.setTraceLayer(selTrace.id, selTrace.layer === "jumper" ? "bottom-copper" : "jumper"))} style={btn}>
-                  {selTrace.layer === "jumper" ? "→ bottom" : "→ jumper"}
-                </button>
-                <button onClick={() => { mutate(() => engine.removeTrace(selTrace.id)); setSelectedTrace(null); }} style={btn}>Delete trace</button>
-                <span style={{ width: 1, height: 20, background: "var(--border)" }} />
-              </>
-            )}
-            {selComp && (
-              <>
-                <span style={{ fontSize: 13, color: "var(--accent)" }}>
-                  {selComp.ref} ({selComp.footprint}) {selComp.rotation}&deg;
-                </span>
-                <button onClick={() => mutate(() => engine.rotateBy90(selComp.id))} style={btn}>Rotate (R)</button>
-                <button onClick={() => { mutate(() => engine.removeComponent(selComp.id)); setSelected(null); }} style={btn}>Delete</button>
-                <span style={{ width: 1, height: 20, background: "var(--border)" }} />
-              </>
-            )}
-            <label style={lbl}>
-              Cols{" "}
-              <input type="number" min={1} max={120} value={cols}
-                onChange={(e) => { const v = clamp(Number(e.target.value)); setCols(v); applySize(v, rows); }}
-                style={input} />
-            </label>
-            <label style={lbl}>
-              Rows{" "}
-              <input type="number" min={1} max={120} value={rows}
-                onChange={(e) => { const v = clamp(Number(e.target.value)); setRows(v); applySize(cols, v); }}
-                style={input} />
-            </label>
-            <button onClick={undo} disabled={history.current.past.length === 0} style={{ ...btn, opacity: history.current.past.length ? 1 : 0.4 }} title="Undo (Ctrl+Z)">↶</button>
-            <button onClick={redo} disabled={history.current.future.length === 0} style={{ ...btn, opacity: history.current.future.length ? 1 : 0.4 }} title="Redo (Ctrl+Y)">↷</button>
-            <button onClick={() => setShowBuildList((s) => !s)} style={{ ...btn, ...(showBuildList ? activeBtn : {}) }}>Build list</button>
-            <button onClick={() => { void exportPdf(engine); }} style={btn}>PDF</button>
-            <button onClick={() => exportPng(engine, { flipped })} style={btn}>PNG</button>
-            <button onClick={() => setResetToken((t) => t + 1)} style={btn}>Reset view</button>
-            <span style={{ width: 1, height: 20, background: "var(--border)" }} />
-            <button onClick={() => netlistRef.current?.click()} style={btn}>Import netlist</button>
-            <button onClick={() => downloadProject(engine.serialize())} style={btn}>Export</button>
-            <button onClick={() => fileRef.current?.click()} style={btn}>Import</button>
+
+            <Sep />
+            {/* Routing group */}
+            <Grp label="Route">
+              <button onClick={toggleRouting} style={{ ...btn, ...(routing ? activeBtn : {}) }} title="Routing: klik lubang demi lubang; Enter/double-click selesai">✎ Route</button>
+              <button onClick={() => { mutate(() => engine.autoroute()); setSelectedTrace(null); }} style={{ ...btn, ...(airwires.length ? activeBtn : {}) }} title="Autoroute semua koneksi tersisa">⚡ Auto</button>
+              {counts.traces > 0 && <button onClick={() => { mutate(() => engine.clearTraces()); setSelectedTrace(null); }} style={btn} title="Hapus semua jalur">Clear</button>}
+              {counts.bottomCrossings > 0 && <button onClick={() => mutate(() => engine.promoteCrossingsToJumper())} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }} title="Ubah crossing jadi jumper">Fix ✕</button>}
+            </Grp>
+
+            <Sep />
+            {/* View group */}
+            <Grp label="View">
+              <button onClick={doFlip} style={{ ...btn, ...(flipped ? activeBtn : {}) }} title="Balik sisi atas/bawah (F)">⇄ {flipped ? "Bottom" : "Top"}</button>
+              <button onClick={() => setMode3d((v) => !v)} style={{ ...btn, ...(mode3d ? activeBtn : {}) }} title="Toggle 2D / 3D">{mode3d ? "3D" : "2D"}</button>
+              <button onClick={() => setResetToken((t) => t + 1)} style={btn} title="Reset zoom/pan">⤢</button>
+            </Grp>
+
+            <Sep />
+            {/* Board size */}
+            <Grp label="Board">
+              <input type="number" min={1} max={120} value={cols} title="Kolom"
+                onChange={(e) => { const v = clamp(Number(e.target.value)); setCols(v); applySize(v, rows); }} style={input} />
+              <span style={{ color: "var(--muted)" }}>×</span>
+              <input type="number" min={1} max={120} value={rows} title="Baris"
+                onChange={(e) => { const v = clamp(Number(e.target.value)); setRows(v); applySize(cols, v); }} style={input} />
+            </Grp>
+
+            <Sep />
+            {/* Edit group */}
+            <Grp label="Edit">
+              <button onClick={undo} disabled={history.current.past.length === 0} style={{ ...btn, opacity: history.current.past.length ? 1 : 0.4 }} title="Undo (Ctrl+Z)">↶</button>
+              <button onClick={redo} disabled={history.current.future.length === 0} style={{ ...btn, opacity: history.current.future.length ? 1 : 0.4 }} title="Redo (Ctrl+Y)">↷</button>
+            </Grp>
+
+            <Sep />
+            {/* Output group */}
+            <Grp label="Output">
+              <button onClick={() => setShowBuildList((s) => !s)} style={{ ...btn, ...(showBuildList ? activeBtn : {}) }} title="Build-list (resep rakit)">☰ List</button>
+              <button onClick={() => { void exportPdf(engine); }} style={btn} title="Export PDF 1:1">PDF</button>
+              <button onClick={() => exportPng(engine, { flipped })} style={btn} title="Export PNG preview">PNG</button>
+            </Grp>
+
+            <Sep />
+            {/* File group */}
+            <Grp label="File">
+              <button onClick={() => netlistRef.current?.click()} style={btn} title="Import netlist KiCad (.net / .xml)">Netlist</button>
+              <button onClick={() => downloadProject(engine.serialize())} style={btn} title="Export project (.json)">⭳</button>
+              <button onClick={() => fileRef.current?.click()} style={btn} title="Import project (.json)">⭱</button>
+            </Grp>
             <input ref={fileRef} type="file" accept="application/json,.json" onChange={onImportFile} style={{ display: "none" }} />
             <input ref={netlistRef} type="file" accept=".net,.xml,.txt" onChange={onImportNetlist} style={{ display: "none" }} />
           </div>
@@ -462,6 +446,21 @@ export default function Home() {
 
         {showBuildList && <BuildListPanel text={engine.buildList()} onClose={() => setShowBuildList(false)} />}
 
+        {(selComp || selTrace) && (
+          <PropertiesPanel
+            component={selComp ?? undefined}
+            footprintPins={selComp ? engine.getFootprint(selComp.footprint)?.pins.length ?? 0 : 0}
+            trace={selTrace}
+            onRef={(v) => mutate(() => engine.setComponentRef(selComp!.id, v))}
+            onValue={(v) => mutate(() => engine.setComponentValue(selComp!.id, v))}
+            onRotation={(r) => mutate(() => engine.rotateComponent(selComp!.id, r))}
+            onDeleteComp={() => { mutate(() => engine.removeComponent(selComp!.id)); setSelected(null); }}
+            onTraceLayer={(l) => mutate(() => engine.setTraceLayer(selTrace!.id, l))}
+            onDeleteTrace={() => { mutate(() => engine.removeTrace(selTrace!.id)); setSelectedTrace(null); }}
+            onClose={() => { setSelected(null); setSelectedTrace(null); }}
+          />
+        )}
+
         <footer style={footerStyle}>
           {routing
             ? "Route: klik lubang demi lubang (jalur ngikut grid) · Enter / double-click = selesai · Esc = batal"
@@ -507,6 +506,103 @@ const footerStyle: React.CSSProperties = {
   background: "var(--panel)",
   borderTop: "1px solid var(--border)",
 };
+import type { PlacedComponent, Trace, Rotation, Layer } from "@/engine/types";
+
+/** EasyEDA-style right-side properties panel for the selected component or trace. */
+function PropertiesPanel(props: {
+  component?: PlacedComponent;
+  footprintPins: number;
+  trace?: Trace;
+  onRef: (v: string) => void;
+  onValue: (v: string) => void;
+  onRotation: (r: Rotation) => void;
+  onDeleteComp: () => void;
+  onTraceLayer: (l: Layer) => void;
+  onDeleteTrace: () => void;
+  onClose: () => void;
+}) {
+  const c = props.component;
+  const t = props.trace;
+  return (
+    <div style={propPanelStyle}>
+      <div style={{ display: "flex", alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+        <strong style={{ fontSize: 13 }}>{c ? "Component" : "Trace"}</strong>
+        <button onClick={props.onClose} style={{ ...btn, marginLeft: "auto" }}>✕</button>
+      </div>
+      <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" }}>
+        {c && (
+          <>
+            <Field label="Ref">
+              <input value={c.ref} onChange={(e) => props.onRef(e.target.value)} style={propInput} />
+            </Field>
+            <Field label="Value">
+              <input value={c.value ?? ""} onChange={(e) => props.onValue(e.target.value)} placeholder="—" style={propInput} />
+            </Field>
+            <Field label="Footprint">
+              <span style={propReadonly}>{c.footprint} · {props.footprintPins} pin</span>
+            </Field>
+            <Field label="Rotation">
+              <div style={{ display: "flex", gap: 4 }}>
+                {[0, 90, 180, 270].map((r) => (
+                  <button key={r} onClick={() => props.onRotation(r as Rotation)}
+                    style={{ ...btn, ...(c.rotation === r ? activeBtn : {}), flex: 1 }}>{r}°</button>
+                ))}
+              </div>
+            </Field>
+            <Field label="Anchor">
+              <span style={propReadonly}>{coordLabel(c.anchor.col, c.anchor.row)}</span>
+            </Field>
+            <button onClick={props.onDeleteComp} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>Delete component</button>
+          </>
+        )}
+        {t && !c && (
+          <>
+            <Field label="Net"><span style={propReadonly}>{t.net ?? "(no net)"}</span></Field>
+            <Field label="Holes"><span style={propReadonly}>{t.path.length}</span></Field>
+            <Field label="Layer">
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => props.onTraceLayer("bottom-copper")} style={{ ...btn, ...(t.layer === "bottom-copper" ? activeBtn : {}), flex: 1 }}>bottom</button>
+                <button onClick={() => props.onTraceLayer("jumper")} style={{ ...btn, ...(t.layer === "jumper" ? activeBtn : {}), flex: 1 }}>jumper</button>
+              </div>
+            </Field>
+            <button onClick={props.onDeleteTrace} style={{ ...btn, borderColor: "#ff5a5a", color: "#ff8f8f" }}>Delete trace</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function coordLabel(col: number, row: number): string {
+  // tiny local helper to avoid importing engine internals into the panel
+  let s = "", n = col + 1;
+  while (n > 0) { s = String.fromCharCode(65 + ((n - 1) % 26)) + s; n = Math.floor((n - 1) / 26); }
+  return s + (row + 1);
+}
+
+/** A labelled toolbar group with its own subtle caption, EasyEDA-style. */
+function Grp({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>{children}</div>
+      <span style={{ fontSize: 9, color: "var(--muted)", letterSpacing: 0.5, textTransform: "uppercase" }}>{label}</span>
+    </div>
+  );
+}
+
+function Sep() {
+  return <span style={{ width: 1, height: 30, background: "var(--border)", margin: "0 2px" }} />;
+}
+
 function BuildListPanel({ text, onClose }: { text: string; onClose: () => void }) {
   return (
     <div
@@ -549,6 +645,28 @@ function BuildListPanel({ text, onClose }: { text: string; onClose: () => void }
   );
 }
 
+const propPanelStyle: React.CSSProperties = {
+  position: "absolute",
+  top: 0,
+  right: 0,
+  bottom: 0,
+  width: 240,
+  background: "var(--panel)",
+  borderLeft: "1px solid var(--border)",
+  display: "flex",
+  flexDirection: "column",
+  boxShadow: "-8px 0 24px rgba(0,0,0,0.3)",
+  zIndex: 4,
+};
+const propInput: React.CSSProperties = {
+  padding: "6px 8px",
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  color: "var(--text)",
+  fontSize: 13,
+};
+const propReadonly: React.CSSProperties = { fontSize: 13, color: "var(--text)", fontFamily: "ui-monospace, Menlo, monospace" };
 const lbl: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
 const input: React.CSSProperties = { width: 56, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 };
 const btn: React.CSSProperties = { padding: "5px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" };

@@ -302,6 +302,16 @@ export class BoardEngine {
     this.mustComponent(id).rotation = rotation;
   }
 
+  /** Rename a component's reference designator. */
+  setComponentRef(id: string, ref: string): void {
+    this.mustComponent(id).ref = ref;
+  }
+
+  /** Set a component's value (e.g. "10k", "NE555"). */
+  setComponentValue(id: string, value: string): void {
+    this.mustComponent(id).value = value;
+  }
+
   /** Rotate by +90° clockwise (wraps). */
   rotateBy90(id: string): void {
     const c = this.mustComponent(id);
