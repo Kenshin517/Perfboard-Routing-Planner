@@ -35,16 +35,35 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
 
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 2000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     mount.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI * 0.92;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-    dir.position.set(100, 150, 100);
-    scene.add(dir);
+    // Soft three-point-ish lighting + a sky/ground hemisphere for depth.
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x20242b, 0.55));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(60, 120, 80);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.near = 1;
+    key.shadow.camera.far = 600;
+    const sc = key.shadow.camera as THREE.OrthographicCamera;
+    sc.left = -60; sc.right = 60; sc.top = 60; sc.bottom = -60;
+    sc.updateProjectionMatrix();
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xbcd0ff, 0.35);
+    fill.position.set(-80, 40, -40);
+    scene.add(fill);
 
     const content = new THREE.Group();
     scene.add(content);
@@ -98,13 +117,14 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     const cz = (cfg.rows - 1) / 2;
     const span = Math.max(cfg.cols, cfg.rows);
 
-    // Board.
+    // Board (slightly glossy phenolic, receives shadows).
     const boardThickness = 0.3;
     const board = new THREE.Mesh(
       new THREE.BoxGeometry(cfg.cols + 1, boardThickness, cfg.rows + 1),
-      new THREE.MeshStandardMaterial({ color: hexToInt(palette.board3d), roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: hexToInt(palette.board3d), roughness: 0.75, metalness: 0.05 }),
     );
     board.position.set(cx, -boardThickness / 2, cz);
+    board.receiveShadow = true;
     content.add(board);
 
     // Pads on BOTH sides (top = component side, bottom = solder side), skipping
@@ -147,14 +167,19 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     for (const comp of engine.getPlacedComponents()) {
       const bb = engine.componentBounds(comp.id);
       const hMm = engine.getFootprint(comp.footprint)?.body.height ?? 6;
-      content.add(
-        buildComponentModel({
-          ...bb,
-          heightUnits: Math.max(0.4, hMm / cfg.pitchMm),
-          footprintName: comp.footprint,
-          value: comp.value ?? "",
-        }),
-      );
+      const model = buildComponentModel({
+        ...bb,
+        heightUnits: Math.max(0.4, hMm / cfg.pitchMm),
+        footprintName: comp.footprint,
+        value: comp.value ?? "",
+      });
+      model.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) {
+          o.castShadow = true;
+          o.receiveShadow = true;
+        }
+      });
+      content.add(model);
     }
 
     // Aim the camera at the board (keep user's current orbit distance if already set).
