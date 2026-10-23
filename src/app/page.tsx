@@ -44,6 +44,7 @@ export default function Home() {
   const [flipScale, setFlipScale] = useState(1);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
   const [showBuildList, setShowBuildList] = useState(false);
+  const [libSearch, setLibSearch] = useState("");
   const [mode3d, setMode3d] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -305,16 +306,32 @@ export default function Home() {
             <div style={{ height: 12 }} />
           </>
         )}
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Components</div>
-        {engine.listFootprints().filter((fp) => !fp.name.startsWith("GEN_")).map((fp) => (
-          <button
-            key={fp.name}
-            onClick={() => { setArmed((a) => (a === fp.name ? null : fp.name)); setPlacingId(null); }}
-            style={{ ...paletteBtn, ...(armed === fp.name ? paletteBtnActive : {}) }}
-          >
-            {fp.name}
-          </button>
-        ))}
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>Library</div>
+        <input
+          value={libSearch}
+          onChange={(e) => setLibSearch(e.target.value)}
+          placeholder="Cari komponen…"
+          style={{ ...propInput, marginBottom: 8 }}
+        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" }}>
+          {engine.listFootprints()
+            .filter((fp) => !fp.name.startsWith("GEN_"))
+            .filter((fp) => fp.name.toLowerCase().includes(libSearch.toLowerCase()))
+            .map((fp) => (
+              <button
+                key={fp.name}
+                onClick={() => { setArmed((a) => (a === fp.name ? null : fp.name)); setPlacingId(null); }}
+                style={{ ...libItem, ...(armed === fp.name ? paletteBtnActive : {}) }}
+                title={`${fp.name} · ${fp.pins.length} pin`}
+              >
+                <FootprintThumb fp={fp} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {fp.name}
+                  <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: 4 }}>{fp.pins.length}p</span>
+                </span>
+              </button>
+            ))}
+        </div>
         {armed && (
           <div style={{ fontSize: 12, color: "var(--accent)", marginTop: 8 }}>
             Klik board untuk taruh {armed}. Esc = stop.
@@ -506,7 +523,26 @@ const footerStyle: React.CSSProperties = {
   background: "var(--panel)",
   borderTop: "1px solid var(--border)",
 };
-import type { PlacedComponent, Trace, Rotation, Layer } from "@/engine/types";
+import type { PlacedComponent, Trace, Rotation, Layer, Footprint } from "@/engine/types";
+
+/** Tiny SVG preview of a footprint's pad pattern for the library browser. */
+function FootprintThumb({ fp }: { fp: Footprint }) {
+  const cs = fp.pins.map((p) => p.col), rs = fp.pins.map((p) => p.row);
+  const minC = Math.min(...cs), maxC = Math.max(...cs), minR = Math.min(...rs), maxR = Math.max(...rs);
+  const w = maxC - minC + 1, h = maxR - minR + 1;
+  const size = 26, pad = 3;
+  const scale = Math.min((size - pad * 2) / Math.max(w, 1), (size - pad * 2) / Math.max(h, 1));
+  const ox = (size - (w - 1) * scale) / 2, oy = (size - (h - 1) * scale) / 2;
+  return (
+    <svg width={size} height={size} style={{ flexShrink: 0, background: "var(--bg)", borderRadius: 4 }}>
+      <rect x={ox - scale * 0.5} y={oy - scale * 0.5} width={(w - 1) * scale + scale} height={(h - 1) * scale + scale}
+        fill="rgba(78,161,255,0.12)" stroke="rgba(78,161,255,0.4)" rx={2} />
+      {fp.pins.map((p, i) => (
+        <circle key={i} cx={ox + (p.col - minC) * scale} cy={oy + (p.row - minR) * scale} r={2} fill="#d9a441" />
+      ))}
+    </svg>
+  );
+}
 
 /** EasyEDA-style right-side properties panel for the selected component or trace. */
 function PropertiesPanel(props: {
@@ -667,6 +703,18 @@ const propInput: React.CSSProperties = {
   fontSize: 13,
 };
 const propReadonly: React.CSSProperties = { fontSize: 13, color: "var(--text)", fontFamily: "ui-monospace, Menlo, monospace" };
+const libItem: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  textAlign: "left",
+  padding: "5px 7px",
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 6,
+  cursor: "pointer",
+  fontSize: 12.5,
+};
 const lbl: React.CSSProperties = { fontSize: 13, color: "var(--muted)" };
 const input: React.CSSProperties = { width: 56, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6 };
 const btn: React.CSSProperties = { padding: "5px 10px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer" };
