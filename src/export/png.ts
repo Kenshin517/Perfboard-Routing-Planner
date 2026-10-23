@@ -26,6 +26,7 @@ export function exportPng(engine: BoardEngine, opts: { flipped?: boolean } = {})
 
   // pads
   for (const h of engine.getHoles()) {
+    if (engine.isMountingBlocked(h.col, h.row)) continue;
     ctx.beginPath();
     ctx.arc(sx(h.col), sy(h.row), CELL * 0.32, 0, Math.PI * 2);
     ctx.fillStyle = palette.pad;
@@ -33,6 +34,16 @@ export function exportPng(engine: BoardEngine, opts: { flipped?: boolean } = {})
     ctx.beginPath();
     ctx.arc(sx(h.col), sy(h.row), CELL * 0.13, 0, Math.PI * 2);
     ctx.fillStyle = palette.hole;
+    ctx.fill();
+  }
+  for (const m of engine.getMountingHoles()) {
+    ctx.beginPath();
+    ctx.arc(sx(m.col), sy(m.row), CELL * 0.55, 0, Math.PI * 2);
+    ctx.fillStyle = "#e8e8ea";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(sx(m.col), sy(m.row), CELL * 0.3, 0, Math.PI * 2);
+    ctx.fillStyle = palette.bg;
     ctx.fill();
   }
 

@@ -25,7 +25,7 @@ function nextRef(engine: BoardEngine, prefix: string): string {
 
 export default function Home() {
   const engineRef = useRef<BoardEngine>();
-  if (!engineRef.current) engineRef.current = createBoard({ cols: 25, rows: 29 }); // A..Y x 1..29 (real board)
+  if (!engineRef.current) engineRef.current = createBoard({ cols: 25, rows: 29, mounting: "corners" }); // A..Y x 1..29 real board + corner mounting holes
   const engine = engineRef.current;
 
   const [rev, setRev] = useState(0);

@@ -12,6 +12,7 @@ import type {
   Footprint,
   HoleCoord,
   Layer,
+  MountingHole,
   Net,
   PinDef,
   PlacedComponent,
@@ -72,6 +73,22 @@ export interface CreateBoardOptions {
   rows: number;
   /** Defaults to {@link DEFAULT_PITCH_MM}. */
   pitchMm?: number;
+  /** Mounting-hole centres; or "corners" for the standard 4 corner holes. */
+  mounting?: MountingHole[] | "corners";
+}
+
+/**
+ * The 4 corner mounting holes of a real perfboard: each sits in the middle of
+ * the 2x2 pad cluster at a corner (e.g. between A1/B1/A2/B2), making those pads
+ * unusable.
+ */
+export function cornerMountingHoles(cols: number, rows: number): MountingHole[] {
+  return [
+    { col: 0.5, row: 0.5 },
+    { col: cols - 1.5, row: 0.5 },
+    { col: 0.5, row: rows - 1.5 },
+    { col: cols - 1.5, row: rows - 1.5 },
+  ];
 }
 
 /** A pin resolved to an absolute board position. */
@@ -94,11 +111,13 @@ export interface AddComponentInput {
 
 /** Factory: build a fresh board. */
 export function createBoard(opts: CreateBoardOptions): BoardEngine {
+  const mounting = opts.mounting === "corners" ? cornerMountingHoles(opts.cols, opts.rows) : opts.mounting;
   return new BoardEngine({
     config: {
       cols: opts.cols,
       rows: opts.rows,
       pitchMm: opts.pitchMm ?? DEFAULT_PITCH_MM,
+      ...(mounting ? { mounting } : {}),
     },
     components: [],
     traces: [],
@@ -149,8 +168,11 @@ export class BoardEngine {
   resize(cols: number, rows: number): void {
     if (!Number.isInteger(cols) || cols <= 0) throw new Error(`resize: bad cols ${cols}`);
     if (!Number.isInteger(rows) || rows <= 0) throw new Error(`resize: bad rows ${rows}`);
+    const hadCornerMounts = this.state.config.mounting !== undefined;
     this.state.config.cols = cols;
     this.state.config.rows = rows;
+    // Keep corner mounting holes pinned to the (new) corners.
+    if (hadCornerMounts) this.state.config.mounting = cornerMountingHoles(cols, rows);
   }
 
   get cols(): number {
@@ -174,6 +196,25 @@ export class BoardEngine {
       col < this.cols &&
       row < this.rows
     );
+  }
+
+  /** Mounting-hole centres (empty when the board has none). */
+  getMountingHoles(): MountingHole[] {
+    return (this.state.config.mounting ?? []).map((m) => ({ ...m }));
+  }
+
+  /** True if this integer hole is consumed by a mounting hole (unusable). */
+  isMountingBlocked(col: number, row: number): boolean {
+    for (const m of this.state.config.mounting ?? []) {
+      // A centre at x.5 blocks the two integer holes it sits between on each axis.
+      if (Math.abs(col - m.col) <= 0.5 && Math.abs(row - m.row) <= 0.5) return true;
+    }
+    return false;
+  }
+
+  /** A real hole that isn't taken by a mounting hole — where parts/traces can go. */
+  hasUsableHole(col: number, row: number): boolean {
+    return this.hasHole(col, row) && !this.isMountingBlocked(col, row);
   }
 
   getHoles(): HoleCoord[] {
@@ -297,7 +338,7 @@ export class BoardEngine {
 
   /** True iff every pin of the component lands on a real hole. */
   componentFits(id: string): boolean {
-    return this.pinPositions(id).every((p) => this.hasHole(p.coord.col, p.coord.row));
+    return this.pinPositions(id).every((p) => this.hasUsableHole(p.coord.col, p.coord.row));
   }
 
   /** Grid bounding box (inclusive) of a component's pins. Shared by every renderer. */
@@ -475,9 +516,11 @@ export class BoardEngine {
       cols: this.cols,
       rows: this.rows,
       allowDiagonal: diagonalForLayer(opts.layer ?? "bottom-copper", opts.allowDiagonal),
-      // A bare wire can't run through another component's pad (it would short).
-      // Start/goal are exempt in findPath, so routing INTO a pad still works.
-      isBlocked: (c) => foreign.has(key(c)) || (opts.isBlocked?.(c) ?? false),
+      // A bare wire can't run through another component's pad (it would short),
+      // nor through a mounting hole. Start/goal are exempt in findPath, so
+      // routing INTO a pad still works.
+      isBlocked: (c) =>
+        foreign.has(key(c)) || this.isMountingBlocked(c.col, c.row) || (opts.isBlocked?.(c) ?? false),
     });
     if (!path) return null;
     const na = this.netAt(a), nb = this.netAt(b);
@@ -636,7 +679,7 @@ export class BoardEngine {
         cols: this.cols,
         rows: this.rows,
         allowDiagonal: false, // bare copper follows the grid
-        isBlocked: (c) => blocked.has(key(c)),
+        isBlocked: (c) => blocked.has(key(c)) || this.isMountingBlocked(c.col, c.row),
       });
 
       if (bottomPath) {
@@ -648,8 +691,14 @@ export class BoardEngine {
           bottom++;
         }
       } else {
-        // No clear bottom path — run a jumper (insulated, may cross/diagonal).
-        const free = findPath(w.a, w.b, { cols: this.cols, rows: this.rows, allowDiagonal: true });
+        // No clear bottom path — run a jumper (insulated, may cross/diagonal but
+        // still can't pass through a mounting hole).
+        const free = findPath(w.a, w.b, {
+          cols: this.cols,
+          rows: this.rows,
+          allowDiagonal: true,
+          isBlocked: (c) => this.isMountingBlocked(c.col, c.row),
+        });
         if (!free) break; // genuinely unreachable; stop to avoid an infinite loop
         this.addTrace(free, { layer: "jumper", net: w.net });
         jumper++;

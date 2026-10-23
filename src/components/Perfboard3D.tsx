@@ -107,20 +107,30 @@ export default function Perfboard3D({ engine, rev }: { engine: BoardEngine; rev:
     board.position.set(cx, -boardThickness / 2, cz);
     content.add(board);
 
-    // Pads on BOTH sides (top = component side, bottom = solder side), so the
-    // bottom isn't a blank slab when you orbit under the board.
+    // Pads on BOTH sides (top = component side, bottom = solder side), skipping
+    // holes consumed by a mounting hole.
+    const usable = engine.getHoles().filter((h) => !engine.isMountingBlocked(h.col, h.row));
     const padGeo = new THREE.CylinderGeometry(0.18, 0.18, 0.05, 10);
     const padMat = new THREE.MeshStandardMaterial({ color: hexToInt(palette.pad), metalness: 0.4, roughness: 0.5 });
     const m = new THREE.Matrix4();
     for (const yPad of [0.02, -boardThickness - 0.02]) {
-      const padMesh = new THREE.InstancedMesh(padGeo, padMat, cfg.cols * cfg.rows);
-      let i = 0;
-      for (let r = 0; r < cfg.rows; r++)
-        for (let c = 0; c < cfg.cols; c++) {
-          m.makeTranslation(c, yPad, r);
-          padMesh.setMatrixAt(i++, m);
-        }
+      const padMesh = new THREE.InstancedMesh(padGeo, padMat, usable.length);
+      usable.forEach((h, i) => {
+        m.makeTranslation(h.col, yPad, h.row);
+        padMesh.setMatrixAt(i, m);
+      });
       content.add(padMesh);
+    }
+
+    // Mounting holes — a white ring through the board.
+    for (const mh of engine.getMountingHoles()) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.42, 0.12, 8, 20),
+        new THREE.MeshStandardMaterial({ color: 0xe8e8ea, metalness: 0.2, roughness: 0.6 }),
+      );
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(mh.col, -boardThickness / 2, mh.row);
+      content.add(ring);
     }
 
     // Traces on the solder (bottom) side.

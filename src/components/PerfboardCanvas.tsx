@@ -214,9 +214,10 @@ export default function PerfboardCanvas({
     const padR = Math.max(1.5, step * 0.34);
     const holeR = Math.max(0.6, step * 0.15);
 
-    // Holes.
+    // Holes (skip the ones consumed by a mounting hole).
     for (let row = 0; row < engine.rows; row++) {
       for (let col = 0; col < engine.cols; col++) {
+        if (engine.isMountingBlocked(col, row)) continue;
         ctx.beginPath();
         ctx.arc(sx(col), sy(row), padR, 0, Math.PI * 2);
         ctx.fillStyle = palette.pad;
@@ -226,6 +227,19 @@ export default function PerfboardCanvas({
         ctx.fillStyle = palette.hole;
         ctx.fill();
       }
+    }
+
+    // Mounting holes — big non-plated holes (white ring) at the corners.
+    for (const m of engine.getMountingHoles()) {
+      const mx = sx(m.col), my = sy(m.row);
+      ctx.beginPath();
+      ctx.arc(mx, my, step * 0.6, 0, Math.PI * 2);
+      ctx.fillStyle = "#e8e8ea";
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(mx, my, step * 0.32, 0, Math.PI * 2);
+      ctx.fillStyle = palette.bg;
+      ctx.fill();
     }
 
     // Ratsnest (airwires) — drawn under components. While routing a net, that

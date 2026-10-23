@@ -33,12 +33,21 @@ function drawPage(doc: jsPDF, engine: BoardEngine, mirror: boolean) {
   doc.setFontSize(12);
   doc.text(mirror ? "ROUTING GUIDE — bottom (solder side, mirrored)" : "PLACEMENT GUIDE — top (component side)", MARGIN, 8);
 
-  // Pads.
+  // Pads (skip holes consumed by a mounting hole).
   doc.setDrawColor(...printPalette.pad);
   doc.setLineWidth(0.15);
   for (const h of engine.getHoles()) {
+    if (engine.isMountingBlocked(h.col, h.row)) continue;
     const p = holeMm(h, layout);
     doc.circle(p.x, p.y, 0.7, "S");
+  }
+
+  // Mounting holes — printed as larger circles so the drill positions line up.
+  doc.setDrawColor(...printPalette.black);
+  doc.setLineWidth(0.3);
+  for (const m of engine.getMountingHoles()) {
+    const p = holeMm({ col: m.col, row: m.row }, layout);
+    doc.circle(p.x, p.y, 1.6, "S");
   }
 
   if (!mirror) {
