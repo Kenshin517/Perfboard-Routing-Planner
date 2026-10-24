@@ -2,11 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { createBoard, BoardEngine } from "@/engine/BoardEngine";
+import { createBoard, BoardEngine, type SerializedProject } from "@/engine/BoardEngine";
 import { refPrefixFor } from "@/engine/footprints";
 import type { HoleCoord } from "@/engine/types";
 import PerfboardCanvas from "@/components/PerfboardCanvas";
-import { saveProject, loadProject, downloadProject, readProjectFile } from "@/storage/projectStorage";
+import BoardSizeSelector from "@/components/BoardSizeSelector";
+import HomeDashboard from "@/components/HomeDashboard";
+import ProjectTree, { type ActiveTab } from "@/components/ProjectTree";
+import SchematicEditor from "@/components/SchematicEditor";
+import { saveProject, loadProject, downloadProject, readProjectFile, addRecentProject } from "@/storage/projectStorage";
 import { parseNetlist } from "@/engine/netlist";
 import { exportPdf } from "@/export/pdf";
 import { exportPng } from "@/export/png";
@@ -25,7 +29,42 @@ function nextRef(engine: BoardEngine, prefix: string): string {
 
 export default function Home() {
   const engineRef = useRef<BoardEngine>();
-  if (!engineRef.current) engineRef.current = createBoard({ cols: 25, rows: 29 }); // A..Y x 1..29 (real board)
+  /** "dashboard" (STM32CubeMX style), "board-selector", or "editor" */
+  const [view, setView] = useState<"dashboard" | "board-selector" | "editor">("dashboard");
+  const [hasActiveProject, setHasActiveProject] = useState<boolean>(false);
+  const [editorTab, setEditorTab] = useState<ActiveTab>("schematic");
+  const [treeCollapsed, setTreeCollapsed] = useState<boolean>(false);
+  const [currentProjectName, setCurrentProjectName] = useState<string>("main q22");
+
+  const initEngine = (c: number, r: number) => {
+    engineRef.current = createBoard({ cols: c, rows: r });
+    setCols(c);
+    setRows(r);
+    setHasActiveProject(true);
+    setView("editor");
+    setEditorTab("pcb");
+    setLoaded(true);
+    addRecentProject(`Board_${c}x${r}.pbrp`, engineRef.current.serialize());
+  };
+
+  const handleLoadProject = (data: SerializedProject, name?: string) => {
+    try {
+      swapEngine(BoardEngine.fromSerialized(data));
+      setHasActiveProject(true);
+      setView("editor");
+      setEditorTab("schematic");
+      setLoaded(true);
+      if (name) {
+        setCurrentProjectName(name.replace(/\.[^/.]+$/, ""));
+        addRecentProject(name, data);
+      }
+    } catch {
+      alert("Project tidak dapat dibuka.");
+    }
+  };
+
+  // Provide a fallback engine so hooks below never see undefined.
+  if (!engineRef.current) engineRef.current = createBoard({ cols: 1, rows: 1 });
   const engine = engineRef.current;
 
   const [rev, setRev] = useState(0);
@@ -102,7 +141,7 @@ export default function Home() {
     bump();
   };
 
-  // Load autosaved project on mount.
+  // Load autosaved project on mount (stays on dashboard, marks active project available).
   useEffect(() => {
     let cancelled = false;
     loadProject().then((data) => {
@@ -110,6 +149,7 @@ export default function Home() {
       if (data) {
         try {
           swapEngine(BoardEngine.fromSerialized(data));
+          setHasActiveProject(true);
         } catch {
           /* ignore corrupt autosave */
         }
@@ -119,8 +159,6 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-    // Intentionally mount-only: load the autosaved project exactly once. The
-    // helpers it calls (swapEngine/loadProject) are stable for this purpose.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -128,7 +166,9 @@ export default function Home() {
   useEffect(() => {
     if (!loaded) return;
     const t = setTimeout(() => {
-      void saveProject(engine.serialize());
+      const snap = engine.serialize();
+      void saveProject(snap);
+      addRecentProject("Current_Project.pbrp", snap);
     }, 400);
     return () => clearTimeout(t);
   }, [rev, loaded, engine]);
@@ -138,7 +178,12 @@ export default function Home() {
     e.target.value = "";
     if (!file) return;
     try {
-      swapEngine(BoardEngine.fromSerialized(await readProjectFile(file)));
+      const data = await readProjectFile(file);
+      swapEngine(BoardEngine.fromSerialized(data));
+      setHasActiveProject(true);
+      setView("editor");
+      setLoaded(true);
+      addRecentProject(file.name, data);
     } catch {
       alert("File project tidak valid.");
     }
@@ -150,10 +195,20 @@ export default function Home() {
     if (!file) return;
     try {
       const parsed = parseNetlist(await file.text());
+      if (!hasActiveProject || engine.cols === 1) {
+        engineRef.current = createBoard({ cols: 27, rows: 35 });
+        setCols(27);
+        setRows(35);
+      }
       pushHistory();
       const res = engine.loadNetlist(parsed);
+      setHasActiveProject(true);
+      setView("editor");
+      setLoaded(true);
       setResetToken((t) => t + 1);
       bump();
+      const filename = file.name.replace(/\.[^/.]+$/, "") + ".pbrp";
+      addRecentProject(filename, engine.serialize());
       const note = `${res.added} komponen masuk ke tray "Unplaced" — klik tiap part lalu taruh di board.`;
       alert(res.generic.length ? `${note}\nFootprint generic (belum dikenal): ${res.generic.join(", ")}.` : note);
     } catch {
@@ -278,10 +333,108 @@ export default function Home() {
 
   const selComp = selected ? engine.getComponent(selected) : undefined;
 
+  // 1. Dashboard (STM32CubeMX Style)
+  if (view === "dashboard") {
+    return (
+      <HomeDashboard
+        onSelectBoard={() => setView("board-selector")}
+        onLoadProject={handleLoadProject}
+        onImportFile={onImportFile}
+        onImportNetlist={onImportNetlist}
+        hasActiveProject={hasActiveProject}
+        onResumeActive={() => setView("editor")}
+      />
+    );
+  }
+
+  // 2. Board Size Selector
+  if (view === "board-selector") {
+    return (
+      <BoardSizeSelector
+        onSelect={(c, r) => initEngine(c, r)}
+        onBack={() => setView("dashboard")}
+      />
+    );
+  }
+
+  // 3. Main Editor (Schematic1 + PCB1 Tabs)
   return (
-    <main style={{ display: "flex", height: "100%" }}>
-      {/* Palette */}
-      <aside style={paletteStyle}>
+    <main style={{ display: "flex", height: "100%", flexDirection: "column" }}>
+      {/* Top EDA Tabs Bar */}
+      <div style={editorTopBar}>
+        <button
+          onClick={() => setView("dashboard")}
+          style={homeNavBtn}
+          title="Kembali ke Dashboard / Menu Utama"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+          </svg>
+          Home
+        </button>
+
+        <div style={topTabSeparator} />
+
+        {/* Tab 1: Schematic1 (1. P1) */}
+        <button
+          onClick={() => setEditorTab("schematic")}
+          style={{
+            ...edaTab,
+            ...(editorTab === "schematic" ? edaTabActive : {}),
+          }}
+        >
+          <span style={{ fontSize: 13 }}>📄</span>
+          <span>Schematic1 (1. P1)</span>
+        </button>
+
+        {/* Tab 2: PCB1 (Perfboard Bolong) */}
+        <button
+          onClick={() => setEditorTab("pcb")}
+          style={{
+            ...edaTab,
+            ...(editorTab === "pcb" ? edaTabActive : {}),
+          }}
+        >
+          <span style={{ fontSize: 13 }}>🟩</span>
+          <span>PCB1 ({engine.cols}×{engine.rows} Perfboard)</span>
+        </button>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12, paddingRight: 16 }}>
+          <span style={{ fontSize: 12, color: "#8b98a5" }}>
+            Project: <strong style={{ color: "#e6edf3" }}>{currentProjectName}</strong>
+          </span>
+        </div>
+      </div>
+
+      {/* Editor Body: Left Project Tree + Active View (Schematic or PCB) */}
+      <div style={{ display: "flex", flex: 1, minHeight: 0, position: "relative" }}>
+        {/* Left Project Tree (Image 1) */}
+        <ProjectTree
+          projectName={currentProjectName}
+          activeTab={editorTab}
+          onSelectTab={setEditorTab}
+          collapsed={treeCollapsed}
+          onToggleCollapse={() => setTreeCollapsed((v) => !v)}
+        />
+
+        {/* View 1: Schematic Editor (Image 2) */}
+        {editorTab === "schematic" && (
+          <SchematicEditor
+            engine={engine}
+            projectName={currentProjectName}
+            onSyncToBoard={() => {
+              bump();
+              alert("Komponen & Netlist berhasil disinkronkan ke Perfboard (PCB1)!");
+            }}
+            onOpenPcb={() => setEditorTab("pcb")}
+          />
+        )}
+
+        {/* View 2: PCB1 (Perfboard Bolong) */}
+        {editorTab === "pcb" && (
+          <div style={{ display: "flex", flex: 1, minWidth: 0 }}>
+            {/* Palette */}
+            <aside style={paletteStyle}>
         {unplaced.length > 0 && (
           <>
             <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--accent)" }}>
@@ -468,9 +621,68 @@ export default function Home() {
             : "Pilih part di kiri → klik board untuk taruh · klik part untuk pilih/geser · R rotate, Del hapus · Ctrl+Z/Y undo · scroll zoom, drag pan"}
         </footer>
       </section>
-    </main>
+    </div>
+  )}
+</div>
+</main>
   );
 }
+
+const editorTopBar: React.CSSProperties = {
+  height: 38,
+  background: "#181d24",
+  borderBottom: "1px solid #2a323c",
+  display: "flex",
+  alignItems: "center",
+  padding: "0 10px",
+  gap: 6,
+  userSelect: "none",
+  flexShrink: 0,
+};
+
+const homeNavBtn: React.CSSProperties = {
+  background: "#082142",
+  border: "1px solid #289ee0",
+  color: "#ffffff",
+  fontWeight: 600,
+  fontSize: 12,
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 10px",
+  borderRadius: 4,
+  cursor: "pointer",
+};
+
+const topTabSeparator: React.CSSProperties = {
+  width: 1,
+  height: 20,
+  background: "#2a323c",
+  margin: "0 6px",
+};
+
+const edaTab: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  borderBottom: "2px solid transparent",
+  color: "#8b98a5",
+  fontSize: 13,
+  fontWeight: 500,
+  padding: "6px 14px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  height: 38,
+  transition: "all 0.15s ease",
+};
+
+const edaTabActive: React.CSSProperties = {
+  color: "#ffffff",
+  borderBottom: "2px solid #289ee0",
+  background: "#1e2630",
+  fontWeight: 600,
+};
 
 const paletteStyle: React.CSSProperties = {
   width: 190,
